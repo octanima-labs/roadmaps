@@ -27,6 +27,9 @@ dependencies = [
 
 ]
 
+[project.scripts]
+roadmaps = "roadmaps.cli:main"
+
 [project.urls]
 Repository = "https://github.com/octanima-labs/roadmaps"
 Documentation = "https://github.com/octanima-labs/roadmaps#readme"

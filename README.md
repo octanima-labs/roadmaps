@@ -2,9 +2,9 @@
 
 `roadmaps` is a Python library for structured, human-editable roadmap files.
 
-It models roadmap items as `Roadmap`, `TaskGroup`, and `Task` objects with status, ordering, priority, optionality, milestones, completion, next-step selection, custom text parsing/rendering, Markdown rendering, and JSON round-trips.
+It models roadmap items as `Roadmap`, `TaskGroup`, and `Task` objects with status, ordering, priority, optionality, milestones, completion, next-step selection, custom text parsing/rendering, Markdown parsing/rendering, JSON round-trips, and a read-only CLI.
 
-The current package is an alpha library. A CLI may come later, but no CLI commands are implemented yet.
+The current package is alpha software. The CLI can inspect and convert roadmap files, but it does not mutate files yet.
 
 ## Installation
 
@@ -116,6 +116,34 @@ Useful entry points:
 - `roadmap.next_step()` for incomplete leaf tasks ordered by priority/status/order
 - `roadmap.milestones()` for leaf tasks grouped by milestone
 - `Task`, `TaskGroup`, and `Roadmap` for direct object construction
+
+## CLI
+
+The `roadmaps` command is read-only. It infers input format from `.roadmap`, `.txt`, `.json`, `.md`, and `.markdown` extensions, or accepts `--format text|json|markdown`.
+
+Validate a file:
+
+```bash
+roadmaps validate roadmap.roadmap
+```
+
+Show next-step tasks in the source format:
+
+```bash
+roadmaps next roadmap.md
+```
+
+Render between formats:
+
+```bash
+roadmaps render roadmap.roadmap --to markdown
+```
+
+Show completion and task counts:
+
+```bash
+roadmaps stats roadmap.json
+```
 
 ## Development
 
