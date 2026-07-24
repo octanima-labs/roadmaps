@@ -2,7 +2,7 @@
 
 `roadmaps` is a Python library for structured, human-editable roadmap files.
 
-It models roadmap items as `Roadmap`, `TaskGroup`, and `Task` objects with status, ordering, priority, optionality, milestones, completion, next-step selection, custom text parsing/rendering, and JSON round-trips.
+It models roadmap items as `Roadmap`, `TaskGroup`, and `Task` objects with status, ordering, priority, optionality, milestones, completion, next-step selection, custom text parsing/rendering, Markdown rendering, and JSON round-trips.
 
 The current package is an alpha library. A CLI may come later, but no CLI commands are implemented yet.
 
@@ -83,6 +83,26 @@ assert loaded == roadmap
 
 JSON deserialization is strict. Decode errors include line and column details, and schema errors include JSON paths such as `$.steps[0].tasks[1].priority`.
 
+## Markdown Rendering
+
+Render a roadmap for display with `to_markdown()`:
+
+```python
+from roadmaps import Roadmap
+
+roadmap = Roadmap.from_text("- [ ]^900 (1) docs: publish examples")
+
+print(roadmap.to_markdown())
+```
+
+Markdown output uses GitHub-style task markers and compact metadata tuples:
+
+```markdown
+- [ ] (900:1) docs: publish examples
+```
+
+Tuple metadata uses `(priority:milestone)`, `(:milestone)`, `(priority)`, `(?)`, or `(?:milestone)` as needed.
+
 ## Core API
 
 Useful entry points:
@@ -90,6 +110,7 @@ Useful entry points:
 - `Roadmap.from_text(source)` and `roadmap.to_text()`
 - `Roadmap.from_json(source)` and `roadmap.to_json()`
 - `Roadmap.from_dict(data)` and `roadmap.to_dict()`
+- `roadmap.to_markdown()` for display-oriented Markdown output
 - `roadmap.next_step()` for incomplete leaf tasks ordered by priority/status/order
 - `roadmap.milestones()` for leaf tasks grouped by milestone
 - `Task`, `TaskGroup`, and `Roadmap` for direct object construction
