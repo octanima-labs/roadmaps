@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from typing import Any
@@ -28,10 +29,28 @@ TASK_JSON_KEYS = {
 }
 TASK_GROUP_JSON_KEYS = TASK_JSON_KEYS | {"tasks"}
 ROADMAP_JSON_KEYS = {"completion", "steps"}
+TASK_LINE_REGEX = re.compile(
+    r"^(?P<indent> *)(?P<order>-|[1-9]\d*\.)(?: "
+    r"(?P<status>\[(?: |~|x|X)\])(?P<meta>\?|!|\^\d+)? "
+    r"(?P<description>.+))$|^(?P<omitted_indent> *)"
+    r"(?P<omitted_order>-|[1-9]\d*\.|[1-9]\d*)(?P<omitted_meta>\?|!|\^\d+)? "
+    r"(?P<omitted_description>.+)$"
+)
 
 
 class JSONValidationError(ValueError):
     """Raised when roadmap JSON cannot be decoded or validated."""
+
+
+@dataclass
+class _TextNode:
+    description: str
+    order: int
+    status: int
+    priority: int
+    optional: bool
+    line_number: int
+    children: list[_TextNode] = field(default_factory=list)
 
 
 @dataclass(init=False)
@@ -332,6 +351,13 @@ class Roadmap:
     def from_json(cls, source: str) -> Roadmap:
         return cls.from_dict(_loads_json(source))
 
+    def to_text(self) -> str:
+        return "\n".join(_render_text_item(step, 0) for step in self.steps)
+
+    @classmethod
+    def from_text(cls, source: str) -> Roadmap:
+        return cls(_parse_text_nodes(source))
+
 
 def _leaf_tasks(items: Iterable[Task | TaskGroup]) -> Iterable[Task]:
     for item in items:
@@ -353,6 +379,198 @@ def _next_step_key(task: Task) -> tuple[int, int, int, int]:
     order_rank = 0 if task.order != UNSORTED else 1
     order_value = task.order if task.order != UNSORTED else 0
     return (-task.priority, status_rank, order_rank, order_value)
+
+
+def _parse_text_nodes(source: str) -> list[Task | TaskGroup]:
+    roots: list[_TextNode] = []
+    stack: list[tuple[int, _TextNode]] = []
+
+    for line_number, raw_line in enumerate(source.splitlines(), start=1):
+        if "\t" in raw_line:
+            msg = f"line {line_number}: tabs are invalid"
+            raise ValueError(msg)
+
+        stripped = raw_line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+
+        indent = len(raw_line) - len(raw_line.lstrip(" "))
+        if indent % 2 != 0:
+            msg = f"line {line_number}: indentation must use multiples of two spaces"
+            raise ValueError(msg)
+        level = indent // 2
+
+        node = _parse_text_task_line(raw_line, line_number)
+        if node is None:
+            _append_text_continuation(stack, raw_line, level, line_number)
+            continue
+
+        while stack and stack[-1][0] >= level:
+            stack.pop()
+
+        if level > 0 and (not stack or stack[-1][0] != level - 1):
+            msg = f"line {line_number}: task indentation cannot skip levels"
+            raise ValueError(msg)
+
+        if stack:
+            stack[-1][1].children.append(node)
+        else:
+            roots.append(node)
+        stack.append((level, node))
+
+    _validate_text_order_sequence(roots)
+    return [_text_node_to_item(node) for node in roots]
+
+
+def _parse_text_task_line(raw_line: str, line_number: int) -> _TextNode | None:
+    match = TASK_LINE_REGEX.match(raw_line)
+    if match is None:
+        return None
+
+    if match.group("status") is not None:
+        order_marker = match.group("order")
+        status_marker = match.group("status")
+        meta_marker = match.group("meta")
+        description = match.group("description")
+    else:
+        order_marker = match.group("omitted_order")
+        status_marker = None
+        meta_marker = match.group("omitted_meta")
+        description = match.group("omitted_description")
+        if description.startswith("["):
+            msg = f"line {line_number}: malformed status or metadata marker"
+            raise ValueError(msg)
+
+    order = _parse_text_order(order_marker)
+    status = _parse_text_status(status_marker)
+    priority, optional = _parse_text_metadata(meta_marker, line_number)
+    if status == COMPLETED and not optional:
+        priority = DEFAULT_PRIORITY
+
+    return _TextNode(
+        description=description,
+        order=order,
+        status=status,
+        priority=priority,
+        optional=optional,
+        line_number=line_number,
+    )
+
+
+def _parse_text_order(marker: str) -> int:
+    if marker == "-":
+        return UNSORTED
+    if marker.endswith("."):
+        return int(marker[:-1])
+    return int(marker)
+
+
+def _parse_text_status(marker: str | None) -> int:
+    if marker is None or marker == "[ ]":
+        return NOT_STARTED
+    if marker == "[~]":
+        return ONGOING
+    return COMPLETED
+
+
+def _parse_text_metadata(marker: str | None, line_number: int) -> tuple[int, bool]:
+    if marker is None:
+        return DEFAULT_PRIORITY, False
+    if marker == "?":
+        return OPTIONAL_TASK, True
+    if marker == "!":
+        return MAX_PRIORITY, False
+    priority = int(marker[1:])
+    if priority <= DEFAULT_PRIORITY:
+        msg = f"line {line_number}: priority must be a positive integer"
+        raise ValueError(msg)
+    return priority, False
+
+
+def _append_text_continuation(
+    stack: list[tuple[int, _TextNode]],
+    raw_line: str,
+    level: int,
+    line_number: int,
+) -> None:
+    if not stack:
+        msg = f"line {line_number}: continuation line has no task"
+        raise ValueError(msg)
+
+    parent_level, parent = stack[-1]
+    if level <= parent_level:
+        msg = f"line {line_number}: expected a task line"
+        raise ValueError(msg)
+    parent.description = f"{parent.description}\n{raw_line.strip()}"
+
+
+def _validate_text_order_sequence(nodes: list[_TextNode]) -> None:
+    expected_order = 1
+    for node in nodes:
+        if node.order != UNSORTED:
+            if node.order != expected_order:
+                msg = (
+                    f"line {node.line_number}: numbered items must be sequential; "
+                    f"expected {expected_order}."
+                )
+                raise ValueError(msg)
+            expected_order += 1
+        _validate_text_order_sequence(node.children)
+
+
+def _text_node_to_item(node: _TextNode) -> Task | TaskGroup:
+    if node.children:
+        return TaskGroup(
+            node.description,
+            order=node.order,
+            priority=node.priority,
+            optional=node.optional,
+            tasks=[_text_node_to_item(child) for child in node.children],
+        )
+    return Task(
+        node.description,
+        order=node.order,
+        priority=node.priority,
+        status=node.status,
+        optional=node.optional,
+    )
+
+
+def _render_text_item(item: Task | TaskGroup, level: int) -> str:
+    indent = "  " * level
+    order = "-" if item.order == UNSORTED else f"{item.order}."
+    description_lines = item.description.splitlines()
+    first_description = description_lines[0]
+    lines = [
+        (
+            f"{indent}{order} {_text_status_marker(item.status)}"
+            f"{_text_metadata_marker(item)} {first_description}"
+        )
+    ]
+
+    continuation_indent = f"{indent}  "
+    lines.extend(f"{continuation_indent}{line}" for line in description_lines[1:])
+    if isinstance(item, TaskGroup):
+        lines.extend(_render_text_item(child, level + 1) for child in item.tasks)
+    return "\n".join(lines)
+
+
+def _text_status_marker(status: int) -> str:
+    if status == NOT_STARTED:
+        return "[ ]"
+    if status == ONGOING:
+        return "[~]"
+    return "[x]"
+
+
+def _text_metadata_marker(item: Task | TaskGroup) -> str:
+    if item.is_optional():
+        return "?"
+    if item.status == COMPLETED or item.priority == DEFAULT_PRIORITY:
+        return ""
+    if item.priority == MAX_PRIORITY:
+        return "!"
+    return f"^{item.priority}"
 
 
 def _loads_json(source: str) -> object:

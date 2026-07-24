@@ -2,19 +2,9 @@ import pytest
 
 from roadmaps import COMPLETED, MAX_PRIORITY, ONGOING, Roadmap, Task, TaskGroup
 
-pytestmark = pytest.mark.skip(reason="text parser and renderer are not implemented yet")
-
-
-def parse_text_roadmap(source: str) -> Roadmap:
-    raise NotImplementedError
-
-
-def render_text_roadmap(roadmap: Roadmap) -> str:
-    raise NotImplementedError
-
 
 def test_parse_nested_tasks_comments_blank_lines_and_continuations() -> None:
-    roadmap = parse_text_roadmap(
+    roadmap = Roadmap.from_text(
         """
 # ignored comment
 1. [x] Establish project scaffold
@@ -45,7 +35,7 @@ def test_parse_nested_tasks_comments_blank_lines_and_continuations() -> None:
 
 
 def test_parse_accepts_omitted_status_and_canonicalizes_defaults() -> None:
-    roadmap = parse_text_roadmap(
+    roadmap = Roadmap.from_text(
         """
 - backlog item
   -? optional child
@@ -83,8 +73,8 @@ def test_render_emits_canonical_status_and_marker_positions() -> None:
         ]
     )
 
-    assert render_text_roadmap(roadmap) == (
-        "- [ ] backlog item\n"
+    assert roadmap.to_text() == (
+        "- [~] backlog item\n"
         "  - [ ]? optional child\n"
         "  - [ ]! urgent child\n"
         "  - [ ]^900 prioritized child\n"
@@ -97,10 +87,59 @@ def test_render_removes_priority_from_completed_tasks() -> None:
     task.mark_completed()
     roadmap = Roadmap([task, Task("completed optional", optional=True, status=COMPLETED)])
 
-    assert render_text_roadmap(roadmap) == (
+    assert roadmap.to_text() == (
         "- [x] completed urgent\n"
         "- [x]? completed optional"
     )
+
+
+def test_parse_normalizes_completed_mandatory_priority_markers() -> None:
+    roadmap = Roadmap.from_text(
+        """
+- [x]! completed urgent
+- [x]^900 completed prioritized
+""".strip()
+    )
+
+    assert roadmap.steps == [
+        Task("completed urgent", status=COMPLETED),
+        Task("completed prioritized", status=COMPLETED),
+    ]
+
+
+def test_task_line_wins_over_continuation_line() -> None:
+    roadmap = Roadmap.from_text(
+        """
+- [ ] parent
+  Not a task line.
+  - [ ] child
+""".strip()
+    )
+
+    assert roadmap == Roadmap(
+        [
+            TaskGroup(
+                "parent\nNot a task line.",
+                tasks=[Task("child")],
+            )
+        ]
+    )
+
+
+def test_render_preserves_list_order_instead_of_sorting_by_order() -> None:
+    roadmap = Roadmap([Task("second", order=2), Task("first", order=1), Task("loose")])
+
+    assert roadmap.to_text() == (
+        "2. [ ] second\n"
+        "1. [ ] first\n"
+        "- [ ] loose"
+    )
+
+
+def test_render_ignores_milestones_until_text_syntax_exists() -> None:
+    roadmap = Roadmap([Task("milestoned", milestone=3)])
+
+    assert roadmap.to_text() == "- [ ] milestoned"
 
 
 @pytest.mark.parametrize(
@@ -109,8 +148,11 @@ def test_render_removes_priority_from_completed_tasks() -> None:
         "\t- [ ] tabs are invalid",
         " - [ ] one-space indentation is invalid",
         "- [ ]?^900 optional priority conflict is invalid",
+        "  - [ ] indentation cannot skip root",
+        "1. [ ] first\n3. [ ] missing second",
+        "1. [ ] first\n1. [ ] duplicate first",
     ],
 )
 def test_parse_rejects_invalid_text_syntax(source: str) -> None:
     with pytest.raises(ValueError):
-        parse_text_roadmap(source)
+        Roadmap.from_text(source)
