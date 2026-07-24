@@ -32,8 +32,10 @@ ROADMAP_JSON_KEYS = {"completion", "steps"}
 TASK_LINE_REGEX = re.compile(
     r"^(?P<indent> *)(?P<order>-|[1-9]\d*\.)(?: "
     r"(?P<status>\[(?: |~|x|X)\])(?P<meta>\?|!|\^\d+)? "
+    r"(?:(?P<milestone>\([^)]*\)) )?"
     r"(?P<description>.+))$|^(?P<omitted_indent> *)"
     r"(?P<omitted_order>-|[1-9]\d*\.|[1-9]\d*)(?P<omitted_meta>\?|!|\^\d+)? "
+    r"(?:(?P<omitted_milestone>\([^)]*\)) )?"
     r"(?P<omitted_description>.+)$"
 )
 
@@ -49,6 +51,7 @@ class _TextNode:
     status: int
     priority: int
     optional: bool
+    milestone: int
     line_number: int
     children: list[_TextNode] = field(default_factory=list)
 
@@ -293,18 +296,18 @@ class Roadmap:
         self,
         index: int | None = None,
         completed: bool | None = None,
-    ) -> dict[int, list[Task | TaskGroup]]:
-        grouped: dict[int, list[Task | TaskGroup]] = {}
-        for item in _walk_items(self.steps):
-            if item.milestone == NO_MILESTONE:
+    ) -> dict[int, list[Task]]:
+        grouped: dict[int, list[Task]] = {}
+        for task in self.leaf_tasks():
+            if task.milestone == NO_MILESTONE:
                 continue
-            if index is not None and item.milestone != index:
+            if index is not None and task.milestone != index:
                 continue
-            if completed is True and item.status != COMPLETED:
+            if completed is True and task.status != COMPLETED:
                 continue
-            if completed is False and item.status == COMPLETED:
+            if completed is False and task.status == COMPLETED:
                 continue
-            grouped.setdefault(item.milestone, []).append(item)
+            grouped.setdefault(task.milestone, []).append(task)
         return grouped
 
     def show_steps(
@@ -431,19 +434,25 @@ def _parse_text_task_line(raw_line: str, line_number: int) -> _TextNode | None:
         order_marker = match.group("order")
         status_marker = match.group("status")
         meta_marker = match.group("meta")
+        milestone_marker = match.group("milestone")
         description = match.group("description")
     else:
         order_marker = match.group("omitted_order")
         status_marker = None
         meta_marker = match.group("omitted_meta")
+        milestone_marker = match.group("omitted_milestone")
         description = match.group("omitted_description")
         if description.startswith("["):
             msg = f"line {line_number}: malformed status or metadata marker"
             raise ValueError(msg)
+    if description.startswith("("):
+        msg = f"line {line_number}: malformed milestone marker"
+        raise ValueError(msg)
 
     order = _parse_text_order(order_marker)
     status = _parse_text_status(status_marker)
     priority, optional = _parse_text_metadata(meta_marker, line_number)
+    milestone = _parse_text_milestone(milestone_marker, line_number)
     if status == COMPLETED and not optional:
         priority = DEFAULT_PRIORITY
 
@@ -453,6 +462,7 @@ def _parse_text_task_line(raw_line: str, line_number: int) -> _TextNode | None:
         status=status,
         priority=priority,
         optional=optional,
+        milestone=milestone,
         line_number=line_number,
     )
 
@@ -487,6 +497,20 @@ def _parse_text_metadata(marker: str | None, line_number: int) -> tuple[int, boo
     return priority, False
 
 
+def _parse_text_milestone(marker: str | None, line_number: int) -> int:
+    if marker is None:
+        return NO_MILESTONE
+    raw_value = marker[1:-1]
+    if not raw_value.isdecimal():
+        msg = f"line {line_number}: milestone must be a positive integer"
+        raise ValueError(msg)
+    milestone = int(raw_value)
+    if milestone <= NO_MILESTONE:
+        msg = f"line {line_number}: milestone must be a positive integer"
+        raise ValueError(msg)
+    return milestone
+
+
 def _append_text_continuation(
     stack: list[tuple[int, _TextNode]],
     raw_line: str,
@@ -518,14 +542,19 @@ def _validate_text_order_sequence(nodes: list[_TextNode]) -> None:
         _validate_text_order_sequence(node.children)
 
 
-def _text_node_to_item(node: _TextNode) -> Task | TaskGroup:
+def _text_node_to_item(
+    node: _TextNode,
+    inherited_milestone: int = NO_MILESTONE,
+) -> Task | TaskGroup:
+    milestone = node.milestone or inherited_milestone
     if node.children:
         return TaskGroup(
             node.description,
             order=node.order,
             priority=node.priority,
             optional=node.optional,
-            tasks=[_text_node_to_item(child) for child in node.children],
+            milestone=milestone,
+            tasks=[_text_node_to_item(child, milestone) for child in node.children],
         )
     return Task(
         node.description,
@@ -533,6 +562,7 @@ def _text_node_to_item(node: _TextNode) -> Task | TaskGroup:
         priority=node.priority,
         status=node.status,
         optional=node.optional,
+        milestone=milestone,
     )
 
 
@@ -544,7 +574,8 @@ def _render_text_item(item: Task | TaskGroup, level: int) -> str:
     lines = [
         (
             f"{indent}{order} {_text_status_marker(item.status)}"
-            f"{_text_metadata_marker(item)} {first_description}"
+            f"{_text_metadata_marker(item)}{_text_milestone_marker(item)} "
+            f"{first_description}"
         )
     ]
 
@@ -571,6 +602,12 @@ def _text_metadata_marker(item: Task | TaskGroup) -> str:
     if item.priority == MAX_PRIORITY:
         return "!"
     return f"^{item.priority}"
+
+
+def _text_milestone_marker(item: Task | TaskGroup) -> str:
+    if item.milestone == NO_MILESTONE:
+        return ""
+    return f" ({item.milestone})"
 
 
 def _loads_json(source: str) -> object:

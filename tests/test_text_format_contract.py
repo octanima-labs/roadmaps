@@ -136,10 +136,65 @@ def test_render_preserves_list_order_instead_of_sorting_by_order() -> None:
     )
 
 
-def test_render_ignores_milestones_until_text_syntax_exists() -> None:
-    roadmap = Roadmap([Task("milestoned", milestone=3)])
+def test_parse_and_render_milestones_after_metadata() -> None:
+    roadmap = Roadmap.from_text(
+        """
+- [ ] (1) plain milestone
+- [ ]^900 (2) prioritized milestone
+-! (3) shorthand urgent milestone
+-? (4) shorthand optional milestone
+""".strip()
+    )
 
-    assert roadmap.to_text() == "- [ ] milestoned"
+    assert roadmap == Roadmap(
+        [
+            Task("plain milestone", milestone=1),
+            Task("prioritized milestone", priority=900, milestone=2),
+            Task("shorthand urgent milestone", priority=MAX_PRIORITY, milestone=3),
+            Task("shorthand optional milestone", optional=True, milestone=4),
+        ]
+    )
+    assert roadmap.to_text() == (
+        "- [ ] (1) plain milestone\n"
+        "- [ ]^900 (2) prioritized milestone\n"
+        "- [ ]! (3) shorthand urgent milestone\n"
+        "- [ ]? (4) shorthand optional milestone"
+    )
+
+
+def test_render_omits_zero_milestone() -> None:
+    roadmap = Roadmap([Task("no milestone")])
+
+    assert roadmap.to_text() == "- [ ] no milestone"
+
+
+def test_parent_milestone_inherits_to_children_when_omitted() -> None:
+    roadmap = Roadmap.from_text(
+        """
+- [ ] (2) parent
+  - [ ] inherited child
+  - [ ] (3) explicit child
+""".strip()
+    )
+
+    assert roadmap == Roadmap(
+        [
+            TaskGroup(
+                "parent",
+                milestone=2,
+                tasks=[
+                    Task("inherited child", milestone=2),
+                    Task("explicit child", milestone=3),
+                ],
+            )
+        ]
+    )
+    assert [task.description for task in roadmap.milestones(index=2)[2]] == [
+        "inherited child"
+    ]
+    assert [task.description for task in roadmap.milestones(index=3)[3]] == [
+        "explicit child"
+    ]
 
 
 @pytest.mark.parametrize(
@@ -151,6 +206,10 @@ def test_render_ignores_milestones_until_text_syntax_exists() -> None:
         "  - [ ] indentation cannot skip root",
         "1. [ ] first\n3. [ ] missing second",
         "1. [ ] first\n1. [ ] duplicate first",
+        "- [ ] (0) zero milestone",
+        "- [ ] (-1) negative milestone",
+        "- [ ] (abc) non-integer milestone",
+        "- [ ] (1 malformed milestone",
     ],
 )
 def test_parse_rejects_invalid_text_syntax(source: str) -> None:

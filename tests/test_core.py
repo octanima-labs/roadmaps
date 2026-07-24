@@ -121,7 +121,6 @@ def test_milestones_group_nested_items_and_filter_completion() -> None:
     roadmap = Roadmap([TaskGroup("group", milestone=1, tasks=[completed, pending]), other])
 
     assert [item.description for item in roadmap.milestones(index=1)[1]] == [
-        "group",
         "completed",
         "pending",
     ]
@@ -129,7 +128,6 @@ def test_milestones_group_nested_items_and_filter_completion() -> None:
         "completed",
     ]
     assert [item.description for item in roadmap.milestones(completed=False)[1]] == [
-        "group",
         "pending",
     ]
 
