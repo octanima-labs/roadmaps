@@ -85,14 +85,16 @@ JSON deserialization is strict. Decode errors include line and column details, a
 
 ## Markdown Rendering
 
-Render a roadmap for display with `to_markdown()`:
+Render a roadmap for display with `to_markdown()` or parse a roadmap section with `from_markdown()`:
 
 ```python
 from roadmaps import Roadmap
 
 roadmap = Roadmap.from_text("- [ ]^900 (1) docs: publish examples")
+same_roadmap = Roadmap.from_markdown("- [ ] (900:1) docs: publish examples")
 
 print(roadmap.to_markdown())
+assert same_roadmap == roadmap
 ```
 
 Markdown output uses GitHub-style task markers and compact metadata tuples:
@@ -101,7 +103,7 @@ Markdown output uses GitHub-style task markers and compact metadata tuples:
 - [ ] (900:1) docs: publish examples
 ```
 
-Tuple metadata uses `(priority:milestone)`, `(:milestone)`, `(priority)`, `(?)`, or `(?:milestone)` as needed.
+Tuple metadata uses `(priority:milestone)`, `(!:milestone)`, `(:milestone)`, `(priority)`, `(!)`, `(?)`, or `(?:milestone)` as needed. Larger Markdown documents can be parsed when they contain a heading named `Roadmap`; the parser reads the highest-level matching section.
 
 ## Core API
 
@@ -110,7 +112,7 @@ Useful entry points:
 - `Roadmap.from_text(source)` and `roadmap.to_text()`
 - `Roadmap.from_json(source)` and `roadmap.to_json()`
 - `Roadmap.from_dict(data)` and `roadmap.to_dict()`
-- `roadmap.to_markdown()` for display-oriented Markdown output
+- `Roadmap.from_markdown(source)` and `roadmap.to_markdown()`
 - `roadmap.next_step()` for incomplete leaf tasks ordered by priority/status/order
 - `roadmap.milestones()` for leaf tasks grouped by milestone
 - `Task`, `TaskGroup`, and `Roadmap` for direct object construction

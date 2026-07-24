@@ -38,6 +38,12 @@ TASK_LINE_REGEX = re.compile(
     r"(?:(?P<omitted_milestone>\([^)]*\)) )?"
     r"(?P<omitted_description>.+)$"
 )
+MARKDOWN_TASK_LINE_REGEX = re.compile(
+    r"^(?P<indent> *)(?P<order>-|[1-9]\d*\.) "
+    r"(?P<status>\[(?: |~|x|X)\])(?: (?P<meta>\([^)]*\)))? "
+    r"(?P<description>.+)$"
+)
+MARKDOWN_HEADING_REGEX = re.compile(r"^(?P<marker>#{1,6})\s+(?P<title>.*?)\s*#*\s*$")
 
 
 class JSONValidationError(ValueError):
@@ -364,6 +370,10 @@ class Roadmap:
     def to_markdown(self) -> str:
         return "\n".join(_render_markdown_item(step, 0) for step in self.steps)
 
+    @classmethod
+    def from_markdown(cls, source: str) -> Roadmap:
+        return cls(_parse_markdown_nodes(source))
+
 
 def _leaf_tasks(items: Iterable[Task | TaskGroup]) -> Iterable[Task]:
     for item in items:
@@ -613,6 +623,169 @@ def _text_milestone_marker(item: Task | TaskGroup) -> str:
     return f" ({item.milestone})"
 
 
+def _parse_markdown_nodes(source: str) -> list[Task | TaskGroup]:
+    roadmap_source = _extract_markdown_roadmap_source(source)
+    roots: list[_TextNode] = []
+    stack: list[tuple[int, _TextNode]] = []
+
+    for line_number, raw_line in roadmap_source:
+        if "\t" in raw_line:
+            msg = f"line {line_number}: tabs are invalid"
+            raise ValueError(msg)
+
+        if not raw_line.strip():
+            continue
+
+        indent = len(raw_line) - len(raw_line.lstrip(" "))
+        if indent % 2 != 0:
+            msg = f"line {line_number}: indentation must use multiples of two spaces"
+            raise ValueError(msg)
+        level = indent // 2
+
+        node = _parse_markdown_task_line(raw_line, line_number)
+        if node is None:
+            _append_markdown_continuation(stack, raw_line, level, line_number)
+            continue
+
+        while stack and stack[-1][0] >= level:
+            stack.pop()
+
+        if level > 0 and (not stack or stack[-1][0] != level - 1):
+            msg = f"line {line_number}: task indentation cannot skip levels"
+            raise ValueError(msg)
+
+        if stack:
+            stack[-1][1].children.append(node)
+        else:
+            roots.append(node)
+        stack.append((level, node))
+
+    _validate_text_order_sequence(roots)
+    return [_text_node_to_item(node) for node in roots]
+
+
+def _extract_markdown_roadmap_source(source: str) -> list[tuple[int, str]]:
+    lines = list(enumerate(source.splitlines(), start=1))
+    headings: list[tuple[int, int, int]] = []
+
+    for index, (_line_number, line) in enumerate(lines):
+        match = MARKDOWN_HEADING_REGEX.match(line)
+        if match is None:
+            continue
+        level = len(match.group("marker"))
+        title = match.group("title").strip()
+        if title.casefold() == "roadmap":
+            headings.append((level, index, _line_number))
+
+    if not headings:
+        if any(MARKDOWN_HEADING_REGEX.match(line) for _line_number, line in lines):
+            msg = "Markdown documents must contain a Roadmap heading"
+            raise ValueError(msg)
+        return lines
+
+    selected_level, selected_index, _selected_line_number = min(
+        headings,
+        key=lambda heading: (heading[0], heading[1]),
+    )
+    end_index = len(lines)
+    for index in range(selected_index + 1, len(lines)):
+        match = MARKDOWN_HEADING_REGEX.match(lines[index][1])
+        if match is not None and len(match.group("marker")) <= selected_level:
+            end_index = index
+            break
+    return lines[selected_index + 1 : end_index]
+
+
+def _parse_markdown_task_line(raw_line: str, line_number: int) -> _TextNode | None:
+    match = MARKDOWN_TASK_LINE_REGEX.match(raw_line)
+    if match is None:
+        return None
+
+    order = _parse_text_order(match.group("order"))
+    status = _parse_text_status(match.group("status"))
+    priority, optional, milestone = _parse_markdown_metadata(
+        match.group("meta"),
+        line_number,
+    )
+    if status == COMPLETED and not optional:
+        priority = DEFAULT_PRIORITY
+
+    return _TextNode(
+        description=_unescape_markdown_description_line(match.group("description")),
+        order=order,
+        status=status,
+        priority=priority,
+        optional=optional,
+        milestone=milestone,
+        line_number=line_number,
+    )
+
+
+def _parse_markdown_metadata(
+    marker: str | None,
+    line_number: int,
+) -> tuple[int, bool, int]:
+    if marker is None:
+        return DEFAULT_PRIORITY, False, NO_MILESTONE
+
+    content = marker[1:-1]
+    if not content:
+        msg = f"line {line_number}: metadata tuple cannot be empty"
+        raise ValueError(msg)
+
+    if ":" in content:
+        priority_text, milestone_text = content.split(":", 1)
+        milestone = _parse_markdown_metadata_milestone(milestone_text, line_number)
+    else:
+        priority_text = content
+        milestone = NO_MILESTONE
+
+    if priority_text == "":
+        return DEFAULT_PRIORITY, False, milestone
+    if priority_text == "?":
+        return OPTIONAL_TASK, True, milestone
+    if priority_text == "!":
+        return MAX_PRIORITY, False, milestone
+    if not priority_text.isdecimal():
+        msg = f"line {line_number}: priority metadata must be !, ?, or a positive integer"
+        raise ValueError(msg)
+    priority = int(priority_text)
+    if priority <= DEFAULT_PRIORITY:
+        msg = f"line {line_number}: priority metadata must be a positive integer"
+        raise ValueError(msg)
+    return priority, False, milestone
+
+
+def _parse_markdown_metadata_milestone(value: str, line_number: int) -> int:
+    if not value.isdecimal():
+        msg = f"line {line_number}: milestone metadata must be a positive integer"
+        raise ValueError(msg)
+    milestone = int(value)
+    if milestone <= NO_MILESTONE:
+        msg = f"line {line_number}: milestone metadata must be a positive integer"
+        raise ValueError(msg)
+    return milestone
+
+
+def _append_markdown_continuation(
+    stack: list[tuple[int, _TextNode]],
+    raw_line: str,
+    level: int,
+    line_number: int,
+) -> None:
+    if not stack:
+        msg = f"line {line_number}: expected a Markdown roadmap task line"
+        raise ValueError(msg)
+
+    parent_level, parent = stack[-1]
+    if level <= parent_level:
+        msg = f"line {line_number}: expected a Markdown roadmap task line"
+        raise ValueError(msg)
+    parent.description = (
+        f"{parent.description}\n{_unescape_markdown_description_line(raw_line.strip())}"
+    )
+
+
 def _render_markdown_item(item: Task | TaskGroup, level: int) -> str:
     indent = "  " * level
     order = "-" if item.order == UNSORTED else f"{item.order}."
@@ -650,7 +823,7 @@ def _markdown_metadata_marker(item: Task | TaskGroup) -> str:
     if item.is_optional():
         priority_marker = "?"
     elif item.status != COMPLETED and item.priority != DEFAULT_PRIORITY:
-        priority_marker = str(item.priority)
+        priority_marker = "!" if item.priority == MAX_PRIORITY else str(item.priority)
 
     milestone_marker = "" if item.milestone == NO_MILESTONE else str(item.milestone)
     if not priority_marker and not milestone_marker:
@@ -664,6 +837,12 @@ def _escape_markdown_description_line(line: str) -> str:
     # Keep user Markdown intact except escapes that prevent accidental new lists.
     if re.match(r"^([*+-]|\d+[.)])\s", line):
         return f"\\{line}"
+    return line
+
+
+def _unescape_markdown_description_line(line: str) -> str:
+    if re.match(r"^\\([*+-]|\d+[.)])\s", line):
+        return line[1:]
     return line
 
 
