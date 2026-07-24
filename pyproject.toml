@@ -5,13 +5,14 @@ build-backend = "hatchling.build"
 [project]
 name = "roadmaps"
 version = "0.1.0"
-description = "Project description"
+description = "A Python library for structured roadmap files"
 readme = "README.md"
 license = "MIT"
 authors = [
   { name = "octanima-labs", email = "34071457+octanima-labs@users.noreply.github.com" },
 ]
 requires-python = ">=3.11"
+keywords = ["planning", "roadmap", "tasks"]
 classifiers = [
   "Development Status :: 3 - Alpha",
   "Intended Audience :: Developers",
@@ -27,9 +28,9 @@ dependencies = [
 ]
 
 [project.urls]
-Repository = "REPO_URL"
-Documentation = "DOCS_URL"
-Issues = "ISSUES_URL"
+Repository = "https://github.com/octanima-labs/roadmaps"
+Documentation = "https://github.com/octanima-labs/roadmaps#readme"
+Issues = "https://github.com/octanima-labs/roadmaps/issues"
 
 [dependency-groups]
 dev = [
