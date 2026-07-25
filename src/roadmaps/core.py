@@ -31,7 +31,7 @@ TASK_GROUP_JSON_KEYS = TASK_JSON_KEYS | {"tasks"}
 ROADMAP_JSON_KEYS = {"completion", "steps"}
 TASK_LINE_REGEX = re.compile(
     r"^(?P<indent> *)(?P<order>-|[1-9]\d*\.)(?: "
-    r"(?P<status>\[(?: |~|x|X)\])(?P<meta>\?|!|\^\d+)? "
+    r"(?P<status>\[(?: |~[^\]]*|x|X)\])(?P<meta>\?|!|\^\d+)? "
     r"(?:(?P<milestone>\([^)]*\)) )?"
     r"(?P<description>.+))$|^(?P<omitted_indent> *)"
     r"(?P<omitted_order>-|[1-9]\d*\.|[1-9]\d*)(?P<omitted_meta>\?|!|\^\d+)? "
@@ -40,7 +40,7 @@ TASK_LINE_REGEX = re.compile(
 )
 MARKDOWN_TASK_LINE_REGEX = re.compile(
     r"^(?P<indent> *)(?P<order>-|[1-9]\d*\.) "
-    r"(?P<status>\[(?: |~|x|X)\])(?: (?P<meta>\([^)]*\)))? "
+    r"(?P<status>\[(?: |~[^\]]*|x|X)\])(?: (?P<meta>\([^)]*\)))? "
     r"(?P<description>.+)$"
 )
 MARKDOWN_HEADING_REGEX = re.compile(r"^(?P<marker>#{1,6})\s+(?P<title>.*?)\s*#*\s*$")
@@ -58,6 +58,7 @@ class _TextNode:
     priority: int
     optional: bool
     milestone: int
+    completion: float
     line_number: int
     children: list[_TextNode] = field(default_factory=list)
 
@@ -70,6 +71,7 @@ class Task:
     optional: bool
     milestone: int
     _status: int = field(repr=False)
+    _completion: float = field(repr=False)
 
     def __init__(
         self,
@@ -79,6 +81,7 @@ class Task:
         status: int = NOT_STARTED,
         optional: bool = False,
         milestone: int = NO_MILESTONE,
+        completion: float = 0.0,
     ) -> None:
         self.description = description
         self.order = order
@@ -86,6 +89,7 @@ class Task:
         self.optional = optional
         self.milestone = milestone
         self._status = status
+        self._completion = completion
         self.__post_init__()
 
     def __post_init__(self) -> None:
@@ -101,6 +105,12 @@ class Task:
         if self._status not in VALID_STATUSES:
             msg = "status must be NOT_STARTED, ONGOING, or COMPLETED"
             raise ValueError(msg)
+        self._completion = _validated_task_completion(
+            self._completion,
+            self._status,
+            "completion",
+            ValueError,
+        )
 
         if self.priority == OPTIONAL_TASK:
             self.optional = True
@@ -119,11 +129,15 @@ class Task:
 
     @property
     def completion(self) -> float:
-        return 100.0 if self.status == COMPLETED else 0.0
+        if self.status == COMPLETED:
+            return 100.0
+        if self.status == ONGOING:
+            return self._completion
+        return 0.0
 
     @property
     def completion_percent(self) -> str:
-        return f"{int(self.completion)}%"
+        return _format_completion_percent(self.completion)
 
     def is_optional(self) -> bool:
         return self.optional
@@ -146,12 +160,20 @@ class Task:
 
     def mark_not_started(self) -> None:
         self._status = NOT_STARTED
+        self._completion = 0.0
 
-    def mark_ongoing(self) -> None:
+    def mark_ongoing(self, completion: float = 0.0) -> None:
         self._status = ONGOING
+        self._completion = _validated_task_completion(
+            completion,
+            ONGOING,
+            "completion",
+            ValueError,
+        )
 
     def mark_completed(self) -> None:
         self._status = COMPLETED
+        self._completion = 0.0
         if not self.optional:
             self.priority = DEFAULT_PRIORITY
 
@@ -245,7 +267,10 @@ class TaskGroup(Task):
         for task in self.tasks:
             task.mark_not_started()
 
-    def mark_ongoing(self) -> None:
+    def mark_ongoing(self, completion: float = 0.0) -> None:
+        if completion:
+            msg = "task groups cannot define explicit completion"
+            raise ValueError(msg)
         for task in self.leaf_tasks():
             if task.status != COMPLETED:
                 task.mark_ongoing()
@@ -287,7 +312,7 @@ class Roadmap:
 
     @property
     def completion_percent(self) -> str:
-        return f"{int(self.completion)}%"
+        return _format_completion_percent(self.completion)
 
     def add_step(self, task: Task | TaskGroup) -> None:
         if not isinstance(task, Task):
@@ -347,7 +372,7 @@ class Roadmap:
     def from_dict(cls, data: object) -> Roadmap:
         mapping = _require_mapping(data, "$")
         _validate_keys(mapping, ROADMAP_JSON_KEYS, "$")
-        _validate_completion(mapping["completion"], "$.completion")
+        _validate_completion(_require_number(mapping["completion"], "$.completion"), "$.completion")
         steps = _require_list(mapping["steps"], "$.steps")
         return cls(
             [_item_from_mapping(_require_mapping(step, f"$.steps[{index}]"), f"$.steps[{index}]") for index, step in enumerate(steps)]
@@ -395,6 +420,49 @@ def _next_step_key(task: Task) -> tuple[int, int, int, int]:
     order_rank = 0 if task.order != UNSORTED else 1
     order_value = task.order if task.order != UNSORTED else 0
     return (-task.priority, status_rank, order_rank, order_value)
+
+
+def _validated_task_completion(
+    value: float,
+    status: int,
+    path: str,
+    error_type: type[ValueError],
+) -> float:
+    if not isinstance(value, int | float) or isinstance(value, bool):
+        msg = f"{path}: must be a number"
+        raise error_type(msg)
+
+    completion = float(value)
+    if not _has_one_decimal_place(completion):
+        msg = f"{path}: must use at most one decimal place"
+        raise error_type(msg)
+
+    if status == ONGOING:
+        if completion == 0.0:
+            return 0.0
+        if 1.0 <= completion <= 99.0:
+            return completion
+        msg = f"{path}: ongoing completion must be between 1.0 and 99.0"
+        raise error_type(msg)
+    if status == NOT_STARTED:
+        if completion == 0.0:
+            return 0.0
+        msg = f"{path}: not-started tasks must use 0.0 completion"
+        raise error_type(msg)
+    if completion in {0.0, 100.0}:
+        return 0.0
+    msg = f"{path}: completed tasks must use 100.0 completion"
+    raise error_type(msg)
+
+
+def _has_one_decimal_place(value: float) -> bool:
+    return round(value, 1) == value
+
+
+def _format_completion_percent(completion: float) -> str:
+    if completion.is_integer():
+        return f"{int(completion)}%"
+    return f"{completion:.1f}%"
 
 
 def _parse_text_nodes(source: str) -> list[Task | TaskGroup]:
@@ -463,7 +531,7 @@ def _parse_text_task_line(raw_line: str, line_number: int) -> _TextNode | None:
         raise ValueError(msg)
 
     order = _parse_text_order(order_marker)
-    status = _parse_text_status(status_marker)
+    status, completion = _parse_status_marker(status_marker, line_number)
     priority, optional = _parse_text_metadata(meta_marker, line_number)
     milestone = _parse_text_milestone(milestone_marker, line_number)
     if status == COMPLETED and not optional:
@@ -476,6 +544,7 @@ def _parse_text_task_line(raw_line: str, line_number: int) -> _TextNode | None:
         priority=priority,
         optional=optional,
         milestone=milestone,
+        completion=completion,
         line_number=line_number,
     )
 
@@ -488,12 +557,31 @@ def _parse_text_order(marker: str) -> int:
     return int(marker)
 
 
-def _parse_text_status(marker: str | None) -> int:
+def _parse_status_marker(marker: str | None, line_number: int) -> tuple[int, float]:
     if marker is None or marker == "[ ]":
-        return NOT_STARTED
+        return NOT_STARTED, 0.0
     if marker == "[~]":
-        return ONGOING
-    return COMPLETED
+        return ONGOING, 0.0
+    if marker in {"[x]", "[X]"}:
+        return COMPLETED, 0.0
+
+    if marker.startswith("[~") and marker.endswith("]"):
+        return ONGOING, _parse_completion_marker(marker[2:-1], line_number)
+
+    msg = f"line {line_number}: malformed status marker"
+    raise ValueError(msg)
+
+
+def _parse_completion_marker(marker: str, line_number: int) -> float:
+    if not re.fullmatch(r"[1-9]\d?\.\d%", marker):
+        msg = f"line {line_number}: ongoing completion must use one decimal percent"
+        raise ValueError(msg)
+
+    completion = float(marker[:-1])
+    if not 1.0 <= completion <= 99.0:
+        msg = f"line {line_number}: ongoing completion must be between 1.0 and 99.0"
+        raise ValueError(msg)
+    return completion
 
 
 def _parse_text_metadata(marker: str | None, line_number: int) -> tuple[int, bool]:
@@ -561,6 +649,9 @@ def _text_node_to_item(
 ) -> Task | TaskGroup:
     milestone = node.milestone or inherited_milestone
     if node.children:
+        if node.completion:
+            msg = f"line {node.line_number}: task groups cannot define explicit completion"
+            raise ValueError(msg)
         return TaskGroup(
             node.description,
             order=node.order,
@@ -576,6 +667,7 @@ def _text_node_to_item(
         status=node.status,
         optional=node.optional,
         milestone=milestone,
+        completion=node.completion,
     )
 
 
@@ -586,7 +678,7 @@ def _render_text_item(item: Task | TaskGroup, level: int) -> str:
     first_description = description_lines[0]
     lines = [
         (
-            f"{indent}{order} {_text_status_marker(item.status)}"
+            f"{indent}{order} {_text_status_marker(item)}"
             f"{_text_metadata_marker(item)}{_text_milestone_marker(item)} "
             f"{first_description}"
         )
@@ -599,10 +691,12 @@ def _render_text_item(item: Task | TaskGroup, level: int) -> str:
     return "\n".join(lines)
 
 
-def _text_status_marker(status: int) -> str:
-    if status == NOT_STARTED:
+def _text_status_marker(item: Task | TaskGroup) -> str:
+    if item.status == NOT_STARTED:
         return "[ ]"
-    if status == ONGOING:
+    if item.status == ONGOING:
+        if not isinstance(item, TaskGroup) and item.completion:
+            return f"[~{item.completion:.1f}%]"
         return "[~]"
     return "[x]"
 
@@ -702,7 +796,7 @@ def _parse_markdown_task_line(raw_line: str, line_number: int) -> _TextNode | No
         return None
 
     order = _parse_text_order(match.group("order"))
-    status = _parse_text_status(match.group("status"))
+    status, completion = _parse_status_marker(match.group("status"), line_number)
     priority, optional, milestone = _parse_markdown_metadata(
         match.group("meta"),
         line_number,
@@ -717,6 +811,7 @@ def _parse_markdown_task_line(raw_line: str, line_number: int) -> _TextNode | No
         priority=priority,
         optional=optional,
         milestone=milestone,
+        completion=completion,
         line_number=line_number,
     )
 
@@ -795,7 +890,7 @@ def _render_markdown_item(item: Task | TaskGroup, level: int) -> str:
     metadata_part = f" {metadata}" if metadata else ""
     lines = [
         (
-            f"{indent}{order} {_markdown_status_marker(item.status)}{metadata_part} "
+            f"{indent}{order} {_markdown_status_marker(item)}{metadata_part} "
             f"{first_description}"
         )
     ]
@@ -810,10 +905,12 @@ def _render_markdown_item(item: Task | TaskGroup, level: int) -> str:
     return "\n".join(lines)
 
 
-def _markdown_status_marker(status: int) -> str:
-    if status == NOT_STARTED:
+def _markdown_status_marker(item: Task | TaskGroup) -> str:
+    if item.status == NOT_STARTED:
         return "[ ]"
-    if status == ONGOING:
+    if item.status == ONGOING:
+        if not isinstance(item, TaskGroup) and item.completion:
+            return f"[~{item.completion:.1f}%]"
         return "[~]"
     return "[x]"
 
@@ -865,12 +962,22 @@ def _item_from_mapping(mapping: Mapping[str, object], path: str) -> Task | TaskG
 
 
 def _task_from_mapping(mapping: Mapping[str, object], path: str) -> Task:
-    values = _task_values_from_mapping(mapping, path, TASK_JSON_KEYS)
+    values = _task_values_from_mapping(
+        mapping,
+        path,
+        TASK_JSON_KEYS,
+        load_leaf_completion=True,
+    )
     return Task(**values)
 
 
 def _task_group_from_mapping(mapping: Mapping[str, object], path: str) -> TaskGroup:
-    values = _task_values_from_mapping(mapping, path, TASK_GROUP_JSON_KEYS)
+    values = _task_values_from_mapping(
+        mapping,
+        path,
+        TASK_GROUP_JSON_KEYS,
+        load_leaf_completion=False,
+    )
     values.pop("status")
     tasks = _require_list(mapping["tasks"], f"{path}.tasks")
     return TaskGroup(
@@ -889,6 +996,8 @@ def _task_values_from_mapping(
     mapping: Mapping[str, object],
     path: str,
     allowed_keys: set[str],
+    *,
+    load_leaf_completion: bool,
 ) -> dict[str, Any]:
     _validate_keys(mapping, allowed_keys, path)
 
@@ -898,7 +1007,8 @@ def _task_values_from_mapping(
     priority = _require_int(mapping["priority"], f"{path}.priority")
     optional = _require_bool(mapping["optional"], f"{path}.optional")
     milestone = _require_int(mapping["milestone"], f"{path}.milestone")
-    _validate_completion(mapping["completion"], f"{path}.completion")
+    completion = _require_number(mapping["completion"], f"{path}.completion")
+    _validate_completion(completion, f"{path}.completion")
 
     if status not in VALID_STATUSES:
         msg = f"{path}.status: must be NOT_STARTED, ONGOING, or COMPLETED"
@@ -918,8 +1028,18 @@ def _task_values_from_mapping(
     if status == COMPLETED and not optional and priority != DEFAULT_PRIORITY:
         msg = f"{path}.priority: completed mandatory tasks must use default priority"
         raise JSONValidationError(msg)
+    if load_leaf_completion:
+        if status == COMPLETED and completion != 100.0:
+            msg = f"{path}.completion: completed tasks must use 100.0 completion"
+            raise JSONValidationError(msg)
+        completion = _validated_task_completion(
+            completion,
+            status,
+            f"{path}.completion",
+            JSONValidationError,
+        )
 
-    return {
+    values: dict[str, Any] = {
         "description": description,
         "order": order,
         "priority": priority,
@@ -927,6 +1047,9 @@ def _task_values_from_mapping(
         "optional": optional,
         "milestone": milestone,
     }
+    if load_leaf_completion:
+        values["completion"] = completion
+    return values
 
 
 def _validate_keys(
@@ -982,10 +1105,14 @@ def _require_bool(value: object, path: str) -> bool:
     return value
 
 
-def _validate_completion(value: object, path: str) -> None:
+def _require_number(value: object, path: str) -> float:
     if not isinstance(value, int | float) or isinstance(value, bool):
         msg = f"{path}: must be a number"
         raise JSONValidationError(msg)
+    return float(value)
+
+
+def _validate_completion(value: float, path: str) -> None:
     if not 0 <= value <= 100:
         msg = f"{path}: must be between 0 and 100"
         raise JSONValidationError(msg)

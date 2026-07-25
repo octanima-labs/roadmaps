@@ -51,6 +51,34 @@ def test_mark_completed_removes_mandatory_priority() -> None:
     assert task.priority == DEFAULT_PRIORITY
 
 
+def test_ongoing_task_accepts_custom_completion() -> None:
+    task = Task("partly done", status=ONGOING, completion=50.5)
+
+    assert task.completion == 50.5
+    assert task.completion_percent == "50.5%"
+
+    task.mark_not_started()
+
+    assert task.status == NOT_STARTED
+    assert task.completion == 0.0
+
+    task.mark_ongoing(75.0)
+
+    assert task.status == ONGOING
+    assert task.completion == 75.0
+
+    task.mark_completed()
+
+    assert task.status == COMPLETED
+    assert task.completion == 100.0
+
+
+@pytest.mark.parametrize("completion", [0.5, 99.5, 100.0, 50.55])
+def test_ongoing_task_rejects_invalid_custom_completion(completion: float) -> None:
+    with pytest.raises(ValueError):
+        Task("invalid completion", status=ONGOING, completion=completion)
+
+
 def test_mark_completed_preserves_optionality() -> None:
     task = Task("optional task", optional=True)
 
@@ -76,14 +104,21 @@ def test_task_group_status_is_derived_from_children() -> None:
     assert group.status == COMPLETED
 
 
+def test_task_group_rejects_explicit_ongoing_completion() -> None:
+    group = TaskGroup("group", tasks=[Task("child")])
+
+    with pytest.raises(ValueError, match="task groups"):
+        group.mark_ongoing(50.0)
+
+
 def test_completion_ignores_optional_tasks() -> None:
-    required = Task("required")
+    required = Task("required", status=ONGOING, completion=50.0)
     optional = Task("optional", optional=True)
     group = TaskGroup("group", tasks=[required, optional])
     roadmap = Roadmap([group, Task("top optional", optional=True)])
 
-    assert group.completion == 0.0
-    assert roadmap.completion == 0.0
+    assert group.completion == 50.0
+    assert roadmap.completion == 50.0
 
     required.mark_completed()
 

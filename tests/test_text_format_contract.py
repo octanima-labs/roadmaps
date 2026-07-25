@@ -68,6 +68,7 @@ def test_render_emits_canonical_status_and_marker_positions() -> None:
                     Task("urgent child", priority=MAX_PRIORITY),
                     Task("prioritized child", priority=900),
                     Task("ongoing child", status=ONGOING),
+                    Task("partial child", status=ONGOING, completion=50.0),
                 ],
             )
         ]
@@ -78,7 +79,8 @@ def test_render_emits_canonical_status_and_marker_positions() -> None:
         "  - [ ]? optional child\n"
         "  - [ ]! urgent child\n"
         "  - [ ]^900 prioritized child\n"
-        "  - [~] ongoing child"
+        "  - [~] ongoing child\n"
+        "  - [~50.0%] partial child"
     )
 
 
@@ -105,6 +107,32 @@ def test_parse_normalizes_completed_mandatory_priority_markers() -> None:
         Task("completed urgent", status=COMPLETED),
         Task("completed prioritized", status=COMPLETED),
     ]
+
+
+def test_parse_and_render_custom_ongoing_completion() -> None:
+    roadmap = Roadmap.from_text(
+        """
+- [~50.0%] partial
+- [~] ongoing
+- [x] complete
+- [ ] not started
+""".strip()
+    )
+
+    assert roadmap == Roadmap(
+        [
+            Task("partial", status=ONGOING, completion=50.0),
+            Task("ongoing", status=ONGOING),
+            Task("complete", status=COMPLETED),
+            Task("not started"),
+        ]
+    )
+    assert roadmap.to_text() == (
+        "- [~50.0%] partial\n"
+        "- [~] ongoing\n"
+        "- [x] complete\n"
+        "- [ ] not started"
+    )
 
 
 def test_task_line_wins_over_continuation_line() -> None:
@@ -210,6 +238,11 @@ def test_parent_milestone_inherits_to_children_when_omitted() -> None:
         "- [ ] (-1) negative milestone",
         "- [ ] (abc) non-integer milestone",
         "- [ ] (1 malformed milestone",
+        "- [~0.0%] zero completion",
+        "- [~99.5%] too much completion",
+        "- [~50%] missing decimal completion",
+        "- [~50.55%] too precise completion",
+        "- [~50.0%] parent\n  - [ ] child",
     ],
 )
 def test_parse_rejects_invalid_text_syntax(source: str) -> None:

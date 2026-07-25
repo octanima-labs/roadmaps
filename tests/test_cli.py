@@ -80,6 +80,21 @@ def test_stats_outputs_completion_and_counts(tmp_path: Path, capsys) -> None:
     )
 
 
+def test_stats_outputs_partial_ongoing_completion(tmp_path: Path, capsys) -> None:
+    path = tmp_path / "roadmap.roadmap"
+    path.write_text("- [~50.5%] partial")
+
+    assert main(["stats", str(path)]) == 0
+
+    assert capsys.readouterr().out == (
+        "completion: 50.5%\n"
+        "tasks: 1\n"
+        "completed: 0\n"
+        "incomplete: 1\n"
+        "milestones: 0\n"
+    )
+
+
 def test_format_override_allows_unknown_extension(tmp_path: Path, capsys) -> None:
     path = tmp_path / "roadmap.data"
     path.write_text("- [ ] task")

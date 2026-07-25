@@ -16,7 +16,14 @@ from roadmaps import (
 
 
 def test_task_dict_round_trip_includes_all_fields() -> None:
-    task = Task("write JSON", order=2, priority=900, status=ONGOING, milestone=1)
+    task = Task(
+        "write JSON",
+        order=2,
+        priority=900,
+        status=ONGOING,
+        milestone=1,
+        completion=50.0,
+    )
 
     data = task.to_dict()
 
@@ -27,7 +34,7 @@ def test_task_dict_round_trip_includes_all_fields() -> None:
         "priority": 900,
         "optional": False,
         "milestone": 1,
-        "completion": 0.0,
+        "completion": 50.0,
     }
     assert Task.from_dict(data) == task
 
@@ -107,7 +114,7 @@ def test_from_dict_ignores_read_only_derived_values() -> None:
                 "priority": DEFAULT_PRIORITY,
                 "optional": False,
                 "milestone": 0,
-                "completion": 0.0,
+                "completion": 100.0,
             }
         ],
     }
@@ -144,6 +151,27 @@ def test_from_dict_rejects_completed_mandatory_task_with_priority() -> None:
     data["priority"] = MAX_PRIORITY
 
     with pytest.raises(JSONValidationError, match=r"\$\.priority: completed mandatory"):
+        Task.from_dict(data)
+
+
+@pytest.mark.parametrize(
+    ("task", "completion", "match"),
+    [
+        (Task("pending"), 1.0, r"not-started tasks"),
+        (Task("done", status=COMPLETED), 0.0, r"completed tasks"),
+        (Task("ongoing", status=ONGOING), 99.5, r"ongoing completion"),
+        (Task("ongoing", status=ONGOING), 50.55, r"one decimal"),
+    ],
+)
+def test_from_dict_rejects_status_completion_conflicts(
+    task: Task,
+    completion: float,
+    match: str,
+) -> None:
+    data = task.to_dict()
+    data["completion"] = completion
+
+    with pytest.raises(JSONValidationError, match=match):
         Task.from_dict(data)
 
 

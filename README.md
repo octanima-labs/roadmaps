@@ -30,7 +30,7 @@ from roadmaps import Roadmap
 source = """
 1. [x] (1) project: create package scaffold
 2. [~]! (2) core: stabilize roadmap model
-  1. [ ]^900 parser: implement text format
+  1. [~50.0%]^900 parser: implement text format
   - [ ]? docs: add public examples
 - [ ] backlog: keep unordered ideas
 """.strip()
@@ -48,6 +48,7 @@ print([task.description for task in roadmap.next_step()])
 1. [x] (1) completed milestone task
 2. [~]! urgent ongoing task
   1. [ ]^900 high-priority child
+  2. [~50.0%] partially complete child
   - [ ]? optional child
 - [ ] unordered task
 ```
@@ -56,7 +57,7 @@ Syntax summary:
 
 - Use exactly two spaces per nesting level.
 - Use `-` for unordered items or `1.`, `2.`, `3.` for numbered sibling items.
-- Use `[ ]`, `[~]`, and `[x]` for not-started, ongoing, and completed status.
+- Use `[ ]`, `[~]`, `[~50.0%]`, and `[x]` for not-started, ongoing, partially complete ongoing, and completed status.
 - Omitted status is accepted as not started, but rendering always emits status.
 - Use `!` for urgent priority and `^N` for numeric priority; larger numbers are higher priority.
 - Use `?` for optional tasks; optionality and priority are mutually exclusive.
@@ -83,6 +84,8 @@ assert loaded == roadmap
 
 JSON deserialization is strict. Decode errors include line and column details, and schema errors include JSON paths such as `$.steps[0].tasks[1].priority`.
 
+Leaf task `completion` is loaded for ongoing tasks. Not-started tasks must use `0.0`, completed tasks must use `100.0`, and ongoing tasks may use `0.0` or a one-decimal value from `1.0` through `99.0`. Group and roadmap completion values are derived from children and recomputed on load.
+
 ## Markdown Rendering
 
 Render a roadmap for display with `to_markdown()` or parse a roadmap section with `from_markdown()`:
@@ -90,8 +93,8 @@ Render a roadmap for display with `to_markdown()` or parse a roadmap section wit
 ```python
 from roadmaps import Roadmap
 
-roadmap = Roadmap.from_text("- [ ]^900 (1) docs: publish examples")
-same_roadmap = Roadmap.from_markdown("- [ ] (900:1) docs: publish examples")
+roadmap = Roadmap.from_text("- [~50.0%]^900 (1) docs: publish examples")
+same_roadmap = Roadmap.from_markdown("- [~50.0%] (900:1) docs: publish examples")
 
 print(roadmap.to_markdown())
 assert same_roadmap == roadmap
@@ -100,7 +103,7 @@ assert same_roadmap == roadmap
 Markdown output uses GitHub-style task markers and compact metadata tuples:
 
 ```markdown
-- [ ] (900:1) docs: publish examples
+- [~50.0%] (900:1) docs: publish examples
 ```
 
 Tuple metadata uses `(priority:milestone)`, `(!:milestone)`, `(:milestone)`, `(priority)`, `(!)`, `(?)`, or `(?:milestone)` as needed. Larger Markdown documents can be parsed when they contain a heading named `Roadmap`; the parser reads the highest-level matching section.

@@ -8,6 +8,7 @@ def test_markdown_renders_status_checkboxes() -> None:
         [
             Task("not started"),
             Task("ongoing", status=ONGOING),
+            Task("partial", status=ONGOING, completion=50.0),
             Task("completed", status=COMPLETED),
         ]
     )
@@ -15,6 +16,7 @@ def test_markdown_renders_status_checkboxes() -> None:
     assert roadmap.to_markdown() == (
         "- [ ] not started\n"
         "- [~] ongoing\n"
+        "- [~50.0%] partial\n"
         "- [x] completed"
     )
 
@@ -125,6 +127,7 @@ def test_markdown_parses_status_markers_and_metadata_tuples() -> None:
 - [ ] (?) optional
 - [ ] (?:4) optional milestone
 - [~] ongoing
+- [~50.0%] partial
 - [X] completed
 """.strip()
     )
@@ -139,9 +142,22 @@ def test_markdown_parses_status_markers_and_metadata_tuples() -> None:
             Task("optional", optional=True),
             Task("optional milestone", optional=True, milestone=4),
             Task("ongoing", status=ONGOING),
+            Task("partial", status=ONGOING, completion=50.0),
             Task("completed", status=COMPLETED),
         ]
     )
+
+
+def test_markdown_round_trips_custom_ongoing_completion() -> None:
+    roadmap = Roadmap(
+        [
+            Task("partial", status=ONGOING, completion=50.0),
+            Task("completed", status=COMPLETED),
+            Task("not started"),
+        ]
+    )
+
+    assert Roadmap.from_markdown(roadmap.to_markdown()) == roadmap
 
 
 def test_markdown_parses_nested_groups_and_inherits_milestones() -> None:
@@ -212,6 +228,11 @@ def test_markdown_parser_unescapes_list_breaking_description_lines() -> None:
         "- [ ] (:0) zero milestone",
         "- [ ] (abc) invalid priority",
         "- [ ] (?!) malformed metadata",
+        "- [~0.0%] zero completion",
+        "- [~99.5%] too much completion",
+        "- [~50%] missing decimal completion",
+        "- [~50.55%] too precise completion",
+        "- [~50.0%] parent\n  - [ ] child",
         "  - [ ] indentation skips root",
         "1. [ ] first\n3. [ ] missing second",
         "# Not Roadmap\n\n- [ ] task",
