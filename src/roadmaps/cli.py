@@ -5,13 +5,15 @@ import sys
 from pathlib import Path
 from typing import TextIO
 
-from roadmaps.core import (
+from roadmaps.constants import (
     COMPLETED,
     DEFAULT_PRIORITY,
     MAX_PRIORITY,
     NO_MILESTONE,
     ONGOING,
     UNSORTED,
+)
+from roadmaps.model import (
     Roadmap,
     Task,
     TaskGroup,
