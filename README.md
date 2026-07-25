@@ -175,20 +175,22 @@ Create a new empty roadmap file:
 ```bash
 roadmaps init roadmap.roadmap
 roadmaps init --format json roadmap.data
+roadmaps init --example roadmap.md
 ```
 
-`init` refuses to overwrite existing files. Unknown extensions default to text unless `--format` is provided.
+`init` refuses to overwrite existing files. Unknown extensions default to text unless `--format` is provided. Use `--example` to create a feature-rich starter roadmap.
 
-Append a top-level task:
+Append a top-level task or add a nested child by 1-based dotted path:
 
 ```bash
-roadmaps add-task roadmap.roadmap "docs: publish examples" --urgent --milestone 1
-roadmaps add-task roadmap.json "core: partial work" --status ongoing --completion 50.0
+roadmaps add-task roadmap.roadmap -d "docs: publish examples" --urgent --milestone 1
+roadmaps add-task roadmap.json -d "core: partial work" --status ongoing --completion 50.0
+roadmaps add-task roadmap.roadmap --parent 1.2 -d "nested child"
 ```
 
-`add-task` supports `--order`, `--priority`, `--urgent`, `--optional`, `--milestone`, `--status not-started|ongoing|completed`, and `--completion`.
+`add-task` supports `--order`, `--priority`, `--urgent`, `--optional`, `--milestone`, `--status not-started|ongoing|completed`, and `--completion`. With `--parent`, the parent path counts all siblings at each level, leaf parents are converted to groups, child order is assigned automatically, and omitted milestones inherit from the parent.
 
-Interactive editing is planned for a future `roadmaps edit` command. Editor dependencies will be optional and installable with `roadmaps[editor]`.
+Interactive editing is planned for a future `roadmaps editor` command. Editor dependencies will be optional and installable with `roadmaps[editor]`.
 
 ## Development
 

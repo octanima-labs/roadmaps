@@ -5,7 +5,16 @@ import sys
 from pathlib import Path
 from typing import TextIO
 
-from roadmaps.core import COMPLETED, MAX_PRIORITY, ONGOING, UNSORTED, Roadmap, Task
+from roadmaps.core import (
+    COMPLETED,
+    MAX_PRIORITY,
+    NO_MILESTONE,
+    ONGOING,
+    UNSORTED,
+    Roadmap,
+    Task,
+    TaskGroup,
+)
 
 Format = str
 
@@ -74,6 +83,11 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Create a new empty roadmap file.",
     )
     init_parser.add_argument("file", type=Path)
+    init_parser.add_argument(
+        "--example",
+        action="store_true",
+        help="Create a feature-rich example roadmap instead of an empty one.",
+    )
     init_parser.set_defaults(handler=_handle_init)
 
     add_task_parser = subparsers.add_parser(
@@ -82,12 +96,13 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Append a top-level task to a roadmap file.",
     )
     add_task_parser.add_argument("file", type=Path)
-    add_task_parser.add_argument("description")
-    add_task_parser.add_argument("--order", type=int, default=UNSORTED)
+    add_task_parser.add_argument("-d", "--description", required=True)
+    add_task_parser.add_argument("--parent", help="1-based dotted path of parent item.")
+    add_task_parser.add_argument("--order", type=int)
     add_task_parser.add_argument("--priority", type=int, default=0)
     add_task_parser.add_argument("--urgent", action="store_true")
     add_task_parser.add_argument("--optional", action="store_true")
-    add_task_parser.add_argument("--milestone", type=int, default=0)
+    add_task_parser.add_argument("--milestone", type=int)
     add_task_parser.add_argument("--status", choices=STATUSES, default="not-started")
     add_task_parser.add_argument("--completion", type=float, default=0.0)
     add_task_parser.set_defaults(handler=_handle_add_task)
@@ -149,7 +164,7 @@ def _handle_init(args: argparse.Namespace) -> int:
 
     try:
         output_format = _detect_format(args.file, args.format, default="text")
-        args.file.write_text(_render_initial_roadmap(output_format))
+        args.file.write_text(_render_initial_roadmap(output_format, example=args.example))
     except OSError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
@@ -168,7 +183,7 @@ def _handle_add_task(args: argparse.Namespace) -> int:
 
     roadmap, source_format = loaded
     try:
-        roadmap.add_step(_task_from_args(args))
+        _add_task_from_args(roadmap, args)
         args.file.write_text(_render_roadmap(roadmap, source_format))
     except OSError as exc:
         print(f"error: {exc}", file=sys.stderr)
@@ -245,13 +260,72 @@ def _render_roadmap(roadmap: Roadmap, output_format: Format) -> str:
     raise ValueError(msg)
 
 
-def _render_initial_roadmap(output_format: Format) -> str:
+def _render_initial_roadmap(output_format: Format, *, example: bool = False) -> str:
+    roadmap = _example_roadmap() if example else Roadmap()
     if output_format == "markdown":
-        return "# Roadmap\n\n"
-    return _render_roadmap(Roadmap(), output_format)
+        body = roadmap.to_markdown()
+        return "# Roadmap\n\n" if not body else f"# Roadmap\n\n{body}"
+    return _render_roadmap(roadmap, output_format)
 
 
-def _task_from_args(args: argparse.Namespace) -> Task:
+def _example_roadmap() -> Roadmap:
+    return Roadmap(
+        [
+            TaskGroup(
+                "core: build **roadmap** model",
+                order=1,
+                milestone=1,
+                tasks=[
+                    Task(
+                        "parser: support custom text",
+                        order=1,
+                        status=COMPLETED,
+                        milestone=1,
+                    ),
+                    Task(
+                        "cli: add write commands",
+                        order=2,
+                        priority=MAX_PRIORITY,
+                        status=ONGOING,
+                        milestone=1,
+                        completion=50.0,
+                    ),
+                    Task("docs: publish [examples](#)", order=3, optional=True, milestone=1),
+                ],
+            ),
+            Task("backlog: keep unordered idea", optional=True),
+        ]
+    )
+
+
+def _add_task_from_args(roadmap: Roadmap, args: argparse.Namespace) -> None:
+    if args.parent is None:
+        roadmap.add_step(
+            _task_from_args(
+                args,
+                order=UNSORTED if args.order is None else args.order,
+                milestone=NO_MILESTONE if args.milestone is None else args.milestone,
+            )
+        )
+        return
+
+    if args.order is not None:
+        msg = "--order cannot be combined with --parent"
+        raise ValueError(msg)
+
+    parent = _resolve_parent_path(roadmap, args.parent)
+    group = parent if isinstance(parent, TaskGroup) else roadmap.task_to_group(parent)
+    milestone = group.milestone if args.milestone is None else args.milestone
+    group.add_task(
+        _task_from_args(
+            args,
+            order=_next_child_order(group),
+            milestone=milestone,
+        )
+    )
+
+
+def _task_from_args(args: argparse.Namespace, *, order: int, milestone: int) -> Task:
     if args.urgent and args.priority:
         msg = "--urgent cannot be combined with --priority"
         raise ValueError(msg)
@@ -259,13 +333,61 @@ def _task_from_args(args: argparse.Namespace) -> Task:
     status = _status_from_name(args.status)
     return Task(
         args.description,
-        order=args.order,
+        order=order,
         priority=priority,
         status=status,
         optional=args.optional,
-        milestone=args.milestone,
+        milestone=milestone,
         completion=args.completion,
     )
+
+
+def _resolve_parent_path(roadmap: Roadmap, path: str) -> Task | TaskGroup:
+    indexes = _parse_parent_path(path)
+    items = roadmap.steps
+    item: Task | TaskGroup | None = None
+
+    for depth, index in enumerate(indexes, start=1):
+        if index > len(items):
+            msg = f"parent path '{path}' is out of range at segment {depth}"
+            raise ValueError(msg)
+        item = items[index - 1]
+        if depth < len(indexes):
+            if not isinstance(item, TaskGroup):
+                msg = f"parent path '{path}' descends through a leaf task"
+                raise ValueError(msg)
+            items = item.tasks
+
+    if item is None:
+        msg = "parent path cannot be empty"
+        raise ValueError(msg)
+    return item
+
+
+def _parse_parent_path(path: str) -> list[int]:
+    parts = path.split(".")
+    if not parts or any(part == "" for part in parts):
+        msg = "parent path must use 1-based dotted indexes"
+        raise ValueError(msg)
+
+    indexes: list[int] = []
+    for part in parts:
+        if not part.isdecimal():
+            msg = "parent path must use 1-based dotted indexes"
+            raise ValueError(msg)
+        index = int(part)
+        if index < 1:
+            msg = "parent path indexes must be positive"
+            raise ValueError(msg)
+        indexes.append(index)
+    return indexes
+
+
+def _next_child_order(group: TaskGroup) -> int:
+    numbered_orders = [task.order for task in group.tasks if task.order > 0]
+    if not numbered_orders:
+        return 1
+    return max(numbered_orders) + 1
 
 
 def _status_from_name(name: str) -> int:
