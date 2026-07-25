@@ -1,3 +1,5 @@
+from datetime import UTC, datetime, timedelta
+
 import pytest
 
 from roadmaps import (
@@ -97,6 +99,77 @@ def test_ongoing_task_accepts_custom_completion() -> None:
     assert task.completion == 100.0
 
 
+def test_task_accepts_explicit_utc_dates() -> None:
+    started = datetime(2026, 1, 1, 10, tzinfo=UTC)
+    completed = datetime(2026, 1, 2, 10, tzinfo=UTC)
+    task = Task(
+        "dated",
+        status=COMPLETED,
+        start_date=started,
+        completion_date=completed,
+    )
+
+    assert task.start_date == started
+    assert task.completion_date == completed
+
+
+def test_task_rejects_naive_dates_and_status_date_conflicts() -> None:
+    aware = datetime(2026, 1, 1, tzinfo=UTC)
+    naive = datetime.fromisoformat("2026-01-01T00:00:00")
+
+    with pytest.raises(ValueError, match="timezone-aware"):
+        Task("naive", status=ONGOING, start_date=naive)
+    with pytest.raises(ValueError, match="not-started"):
+        Task("pending", start_date=aware)
+    with pytest.raises(ValueError, match="ongoing"):
+        Task("ongoing", status=ONGOING, completion_date=aware)
+    with pytest.raises(ValueError, match="earlier"):
+        Task(
+            "bad order",
+            status=COMPLETED,
+            start_date=aware + timedelta(days=1),
+            completion_date=aware,
+        )
+
+
+def test_status_transitions_manage_dates() -> None:
+    started = datetime(2026, 1, 1, 10, tzinfo=UTC)
+    later = datetime(2026, 1, 1, 11, tzinfo=UTC)
+    completed = datetime(2026, 1, 1, 12, tzinfo=UTC)
+    task = Task("transitions")
+
+    task.mark_ongoing(timestamp=started)
+    task.mark_ongoing(timestamp=later)
+
+    assert task.start_date == started
+    assert task.completion_date is None
+
+    task.mark_completed(timestamp=completed)
+
+    assert task.start_date == started
+    assert task.completion_date == completed
+
+    task.mark_ongoing(timestamp=later)
+
+    assert task.start_date == started
+    assert task.completion_date is None
+
+    task.mark_not_started()
+
+    assert task.start_date is None
+    assert task.completion_date is None
+
+
+def test_mark_completed_from_not_started_sets_both_dates() -> None:
+    completed = datetime(2026, 1, 1, 12, tzinfo=UTC)
+    task = Task("done")
+
+    task.mark_completed(timestamp=completed)
+
+    assert task.start_date == completed
+    assert task.completion_date == completed
+
+
 @pytest.mark.parametrize("completion", [0.5, 99.5, 100.0, 50.55])
 def test_ongoing_task_rejects_invalid_custom_completion(completion: float) -> None:
     with pytest.raises(ValueError):
@@ -148,6 +221,32 @@ def test_completion_ignores_optional_tasks() -> None:
 
     assert group.completion == 100.0
     assert roadmap.completion == 100.0
+
+
+def test_task_group_dates_are_derived_from_descendant_leaf_tasks() -> None:
+    first_start = datetime(2026, 1, 1, 10, tzinfo=UTC)
+    second_start = datetime(2026, 1, 1, 11, tzinfo=UTC)
+    first_done = datetime(2026, 1, 1, 12, tzinfo=UTC)
+    second_done = datetime(2026, 1, 1, 13, tzinfo=UTC)
+    optional_done = datetime(2026, 1, 1, 14, tzinfo=UTC)
+    first = Task("first", status=COMPLETED, start_date=first_start, completion_date=first_done)
+    second = Task(
+        "second",
+        status=COMPLETED,
+        start_date=second_start,
+        completion_date=second_done,
+    )
+    optional = Task(
+        "optional",
+        status=COMPLETED,
+        optional=True,
+        start_date=first_start - timedelta(days=1),
+        completion_date=optional_done,
+    )
+    group = TaskGroup("group", tasks=[TaskGroup("nested", tasks=[first, second]), optional])
+
+    assert group.start_date == first_start - timedelta(days=1)
+    assert group.completion_date == second_done
 
 
 def test_next_step_returns_incomplete_leaf_tasks_in_priority_order() -> None:

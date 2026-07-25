@@ -4,7 +4,7 @@
 
 It models roadmap items as `Roadmap`, `TaskGroup`, and `Task` objects with status, ordering, priority, optionality, milestones, completion, next-step selection, custom text parsing/rendering, Markdown parsing/rendering, JSON round-trips, and a CLI.
 
-The current package is alpha software. The CLI can inspect, convert, initialize, and append top-level tasks to roadmap files.
+The current package is alpha software. The CLI can inspect, convert, initialize, and append top-level or nested tasks to roadmap files.
 
 ## Installation
 
@@ -88,6 +88,8 @@ JSON deserialization is strict. Decode errors include line and column details, a
 
 Leaf task `completion` is loaded for ongoing tasks. Not-started tasks must use `0.0`, completed tasks must use `100.0`, and ongoing tasks may use `0.0` or a one-decimal value from `1.0` through `99.0`. Group and roadmap completion values are derived from children and recomputed on load.
 
+Leaf task `start_date` and `completion_date` are optional JSON-only fields. They use UTC ISO timestamps such as `2026-07-25T10:30:00Z`, are validated against task status, and are omitted when absent. Task groups serialize derived dates when present; text and Markdown formats do not preserve dates.
+
 Descriptions remain plain strings in JSON. Inline rich text is preserved, while block Markdown structures are rejected during model validation.
 
 ## Markdown Rendering
@@ -126,6 +128,8 @@ Useful entry points:
 - `Task.to_group()` and `TaskGroup.to_task()` for low-level task/group conversion
 - `roadmap.task_to_group(task)` and `roadmap.group_to_task(group)` for in-place identity-based conversion, including nested items
 - `Task`, `TaskGroup`, and `Roadmap` for direct object construction
+
+`Task.mark_ongoing()` sets `start_date` when missing and clears `completion_date`. `Task.mark_completed()` sets `completion_date` and fills `start_date` if needed. `TaskGroup.start_date` and `TaskGroup.completion_date` are derived from descendant leaf tasks.
 
 Convert an existing task into a group, then flatten it back while preserving metadata:
 
@@ -199,7 +203,7 @@ roadmaps add-task roadmap.json -d "core: partial work" --status ongoing --comple
 roadmaps add-task roadmap.roadmap --parent 1.2 -d "nested child"
 ```
 
-`add-task` supports `--order`, `--priority`, `--urgent`, `--optional`, `--milestone`, `--status not-started|ongoing|completed`, and `--completion`. With `--parent`, the parent path counts all siblings at each level, leaf parents are converted to groups, child order is assigned automatically, and omitted milestones inherit from the parent.
+`add-task` supports `--order`, `--priority`, `--urgent`, `--optional`, `--milestone`, `--status not-started|ongoing|completed`, and `--completion`. With `--parent`, the parent path counts all siblings at each level, leaf parents are converted to groups, child order is assigned automatically, and omitted milestones inherit from the parent. Ongoing and completed tasks created through `add-task` receive JSON-persisted date fields automatically.
 
 Interactive editing is planned for a future `roadmaps editor` command. Editor dependencies will be optional and installable with `roadmaps[editor]`.
 

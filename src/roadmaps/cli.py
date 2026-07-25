@@ -391,15 +391,22 @@ def _task_from_args(args: argparse.Namespace, *, order: int, milestone: int) -> 
         raise ValueError(msg)
     priority = MAX_PRIORITY if args.urgent else args.priority
     status = _status_from_name(args.status)
-    return Task(
+    if status != ONGOING and args.completion:
+        msg = "--completion can only be used with --status ongoing"
+        raise ValueError(msg)
+
+    task = Task(
         args.description,
         order=order,
         priority=priority,
-        status=status,
         optional=args.optional,
         milestone=milestone,
-        completion=args.completion,
     )
+    if status == ONGOING:
+        task.mark_ongoing(completion=args.completion)
+    elif status == COMPLETED:
+        task.mark_completed()
+    return task
 
 
 def _resolve_parent_path(roadmap: Roadmap, path: str) -> Task | TaskGroup:

@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from roadmaps import ONGOING, Roadmap, Task
+from roadmaps import COMPLETED, ONGOING, Roadmap, Task
 from roadmaps.cli import main
 
 
@@ -266,9 +266,28 @@ def test_add_task_preserves_json_format(tmp_path: Path) -> None:
         == 0
     )
 
-    assert Roadmap.from_json(path.read_text()) == Roadmap(
-        [Task("partial", status=ONGOING, completion=50.0)]
-    )
+    task = Roadmap.from_json(path.read_text()).steps[0]
+
+    assert isinstance(task, Task)
+    assert task.description == "partial"
+    assert task.status == ONGOING
+    assert task.completion == 50.0
+    assert task.start_date is not None
+    assert task.completion_date is None
+
+
+def test_add_task_completed_sets_json_dates(tmp_path: Path) -> None:
+    path = tmp_path / "roadmap.json"
+    path.write_text(Roadmap().to_json())
+
+    assert main(["add-task", str(path), "-d", "done", "--status", "completed"]) == 0
+
+    task = Roadmap.from_json(path.read_text()).steps[0]
+
+    assert isinstance(task, Task)
+    assert task.status == COMPLETED
+    assert task.start_date is not None
+    assert task.completion_date is not None
 
 
 def test_add_task_preserves_markdown_format(tmp_path: Path) -> None:

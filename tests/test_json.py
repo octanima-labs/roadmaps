@@ -1,3 +1,5 @@
+from datetime import UTC, datetime
+
 import pytest
 
 from roadmaps import (
@@ -47,6 +49,39 @@ def test_optional_task_serializes_with_priority_sentinel() -> None:
     assert Task.from_dict(task.to_dict()) == task
 
 
+def test_task_json_includes_date_fields_only_when_present() -> None:
+    started = datetime(2026, 1, 1, 10, 30, tzinfo=UTC)
+    completed = datetime(2026, 1, 1, 11, 30, tzinfo=UTC)
+    task = Task(
+        "dated",
+        status=COMPLETED,
+        start_date=started,
+        completion_date=completed,
+    )
+
+    assert Task("plain").to_dict().keys() == {
+        "description",
+        "order",
+        "status",
+        "priority",
+        "optional",
+        "milestone",
+        "completion",
+    }
+    assert task.to_dict()["start_date"] == "2026-01-01T10:30:00Z"
+    assert task.to_dict()["completion_date"] == "2026-01-01T11:30:00Z"
+    assert Task.from_dict(task.to_dict()) == task
+
+
+def test_task_json_parses_z_timestamps() -> None:
+    data = Task("ongoing", status=ONGOING).to_dict()
+    data["start_date"] = "2026-01-01T10:30:00Z"
+
+    task = Task.from_dict(data)
+
+    assert task.start_date == datetime(2026, 1, 1, 10, 30, tzinfo=UTC)
+
+
 def test_task_json_round_trip_preserves_inline_markdown_description() -> None:
     task = Task("docs: use **bold**, `code`, $x$, [links](#), and issue #123")
 
@@ -63,6 +98,27 @@ def test_task_group_dict_round_trip_uses_tasks_to_imply_group() -> None:
     assert data["status"] == COMPLETED
     assert data["completion"] == 100.0
     assert TaskGroup.from_dict(data) == group
+
+
+def test_task_group_json_includes_derived_dates_when_present() -> None:
+    started = datetime(2026, 1, 1, 10, tzinfo=UTC)
+    completed = datetime(2026, 1, 1, 11, tzinfo=UTC)
+    group = TaskGroup(
+        "group",
+        tasks=[
+            Task(
+                "done",
+                status=COMPLETED,
+                start_date=started,
+                completion_date=completed,
+            )
+        ],
+    )
+
+    data = group.to_dict()
+
+    assert data["start_date"] == "2026-01-01T10:00:00Z"
+    assert data["completion_date"] == "2026-01-01T11:00:00Z"
 
 
 def test_roadmap_json_round_trip_uses_stable_pretty_output() -> None:
@@ -158,6 +214,43 @@ def test_from_dict_rejects_completed_mandatory_task_with_priority() -> None:
 
     with pytest.raises(JSONValidationError, match=r"\$\.priority: completed mandatory"):
         Task.from_dict(data)
+
+
+def test_from_dict_rejects_invalid_date_values_with_json_path() -> None:
+    data = Task("ongoing", status=ONGOING).to_dict()
+    data["start_date"] = "not a date"
+
+    with pytest.raises(JSONValidationError, match=r"\$\.start_date"):
+        Task.from_dict(data)
+
+
+def test_from_dict_rejects_status_date_conflicts() -> None:
+    pending = Task("pending").to_dict()
+    pending["start_date"] = "2026-01-01T10:00:00Z"
+
+    ongoing = Task("ongoing", status=ONGOING).to_dict()
+    ongoing["completion_date"] = "2026-01-01T11:00:00Z"
+
+    with pytest.raises(JSONValidationError, match="not-started"):
+        Task.from_dict(pending)
+    with pytest.raises(JSONValidationError, match="ongoing"):
+        Task.from_dict(ongoing)
+
+
+def test_text_and_markdown_round_trips_drop_dates() -> None:
+    task = Task(
+        "dated",
+        status=COMPLETED,
+        start_date=datetime(2026, 1, 1, 10, tzinfo=UTC),
+        completion_date=datetime(2026, 1, 1, 11, tzinfo=UTC),
+    )
+
+    assert Roadmap.from_text(Roadmap([task]).to_text()).steps == [
+        Task("dated", status=COMPLETED)
+    ]
+    assert Roadmap.from_markdown(Roadmap([task]).to_markdown()).steps == [
+        Task("dated", status=COMPLETED)
+    ]
 
 
 @pytest.mark.parametrize(

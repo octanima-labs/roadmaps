@@ -4,6 +4,7 @@ import json
 import re
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from typing import Any
 
 NOT_STARTED = 0
@@ -19,14 +20,17 @@ UNSORTED = -1
 NO_MILESTONE = 0
 
 TASK_JSON_KEYS = {
+    "completion_date",
     "completion",
     "description",
     "milestone",
     "optional",
     "order",
     "priority",
+    "start_date",
     "status",
 }
+TASK_JSON_OPTIONAL_KEYS = {"completion_date", "start_date"}
 TASK_GROUP_JSON_KEYS = TASK_JSON_KEYS | {"tasks"}
 ROADMAP_JSON_KEYS = {"completion", "steps"}
 TASK_LINE_REGEX = re.compile(
@@ -72,6 +76,8 @@ class Task:
     milestone: int
     _status: int = field(repr=False)
     _completion: float = field(repr=False)
+    _start_date: datetime | None = field(repr=False)
+    _completion_date: datetime | None = field(repr=False)
 
     def __init__(
         self,
@@ -82,6 +88,8 @@ class Task:
         optional: bool = False,
         milestone: int = NO_MILESTONE,
         completion: float = 0.0,
+        start_date: datetime | None = None,
+        completion_date: datetime | None = None,
     ) -> None:
         self.description = description
         self.order = order
@@ -90,6 +98,8 @@ class Task:
         self.milestone = milestone
         self._status = status
         self._completion = completion
+        self._start_date = start_date
+        self._completion_date = completion_date
         self.__post_init__()
 
     def __post_init__(self) -> None:
@@ -110,6 +120,23 @@ class Task:
             self._completion,
             self._status,
             "completion",
+            ValueError,
+        )
+        self._start_date = _normalize_datetime(
+            self._start_date,
+            "start_date",
+            ValueError,
+        )
+        self._completion_date = _normalize_datetime(
+            self._completion_date,
+            "completion_date",
+            ValueError,
+        )
+        _validate_task_dates(
+            self._status,
+            self._start_date,
+            self._completion_date,
+            "date",
             ValueError,
         )
 
@@ -140,6 +167,14 @@ class Task:
     def completion_percent(self) -> str:
         return _format_completion_percent(self.completion)
 
+    @property
+    def start_date(self) -> datetime | None:
+        return self._start_date
+
+    @property
+    def completion_date(self) -> datetime | None:
+        return self._completion_date
+
     def is_optional(self) -> bool:
         return self.optional
 
@@ -162,8 +197,14 @@ class Task:
     def mark_not_started(self) -> None:
         self._status = NOT_STARTED
         self._completion = 0.0
+        self._start_date = None
+        self._completion_date = None
 
-    def mark_ongoing(self, completion: float = 0.0) -> None:
+    def mark_ongoing(
+        self,
+        completion: float = 0.0,
+        timestamp: datetime | None = None,
+    ) -> None:
         self._status = ONGOING
         self._completion = _validated_task_completion(
             completion,
@@ -171,10 +212,17 @@ class Task:
             "completion",
             ValueError,
         )
+        self._completion_date = None
+        if self._start_date is None:
+            self._start_date = _timestamp_or_now(timestamp)
 
-    def mark_completed(self) -> None:
+    def mark_completed(self, timestamp: datetime | None = None) -> None:
+        completed_at = _timestamp_or_now(timestamp)
         self._status = COMPLETED
         self._completion = 0.0
+        if self._start_date is None:
+            self._start_date = completed_at
+        self._completion_date = completed_at
         if not self.optional:
             self.priority = DEFAULT_PRIORITY
 
@@ -192,7 +240,7 @@ class Task:
         )
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        data = {
             "description": self.description,
             "order": self.order,
             "status": self.status,
@@ -201,6 +249,11 @@ class Task:
             "milestone": self.milestone,
             "completion": self.completion,
         }
+        if self.start_date is not None:
+            data["start_date"] = _datetime_to_json(self.start_date)
+        if self.completion_date is not None:
+            data["completion_date"] = _datetime_to_json(self.completion_date)
+        return data
 
     @classmethod
     def from_dict(cls, data: object) -> Task:
@@ -268,6 +321,26 @@ class TaskGroup(Task):
             return 100.0
         return sum(task.completion for task in mandatory_tasks) / len(mandatory_tasks)
 
+    @property
+    def start_date(self) -> datetime | None:
+        dates = [task.start_date for task in self.leaf_tasks() if task.start_date is not None]
+        if not dates:
+            return None
+        return min(dates)
+
+    @property
+    def completion_date(self) -> datetime | None:
+        if self.status != COMPLETED:
+            return None
+        dates = [
+            task.completion_date
+            for task in _mandatory_leaf_tasks(self.tasks)
+            if task.completion_date is not None
+        ]
+        if not dates:
+            return None
+        return max(dates)
+
     def add_task(self, task: Task | TaskGroup) -> None:
         if not isinstance(task, Task):
             msg = "task must be a Task or TaskGroup"
@@ -299,19 +372,23 @@ class TaskGroup(Task):
         for task in self.tasks:
             task.mark_not_started()
 
-    def mark_ongoing(self, completion: float = 0.0) -> None:
+    def mark_ongoing(
+        self,
+        completion: float = 0.0,
+        timestamp: datetime | None = None,
+    ) -> None:
         if completion:
             msg = "task groups cannot define explicit completion"
             raise ValueError(msg)
         for task in self.leaf_tasks():
             if task.status != COMPLETED:
-                task.mark_ongoing()
+                task.mark_ongoing(timestamp=timestamp)
                 return
 
-    def mark_completed(self) -> None:
+    def mark_completed(self, timestamp: datetime | None = None) -> None:
         for task in self.tasks:
             if not task.is_optional():
-                task.mark_completed()
+                task.mark_completed(timestamp=timestamp)
 
     def to_task(self) -> Task:
         return Task(
@@ -321,6 +398,8 @@ class TaskGroup(Task):
             status=self.status,
             optional=self.optional,
             milestone=self.milestone,
+            start_date=self.start_date,
+            completion_date=self.completion_date,
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -490,6 +569,16 @@ def _leaf_tasks(items: Iterable[Task | TaskGroup]) -> Iterable[Task]:
             yield item
 
 
+def _mandatory_leaf_tasks(items: Iterable[Task | TaskGroup]) -> Iterable[Task]:
+    for item in items:
+        if item.is_optional():
+            continue
+        if isinstance(item, TaskGroup):
+            yield from _mandatory_leaf_tasks(item.tasks)
+        else:
+            yield item
+
+
 def _walk_items(items: Iterable[Task | TaskGroup]) -> Iterable[Task | TaskGroup]:
     for item in items:
         yield item
@@ -621,6 +710,78 @@ def _format_completion_percent(completion: float) -> str:
     if completion.is_integer():
         return f"{int(completion)}%"
     return f"{completion:.1f}%"
+
+
+def _timestamp_or_now(timestamp: datetime | None) -> datetime:
+    if timestamp is None:
+        return datetime.now(UTC)
+    normalized = _normalize_datetime(timestamp, "timestamp", ValueError)
+    if normalized is None:  # pragma: no cover - timestamp is known non-None here.
+        msg = "timestamp: must be a datetime"
+        raise ValueError(msg)
+    return normalized
+
+
+def _normalize_datetime(
+    value: datetime | None,
+    path: str,
+    error_type: type[ValueError],
+) -> datetime | None:
+    if value is None:
+        return None
+    if not isinstance(value, datetime):
+        msg = f"{path}: must be a datetime or None"
+        raise error_type(msg)
+    if value.tzinfo is None or value.utcoffset() is None:
+        msg = f"{path}: must be timezone-aware"
+        raise error_type(msg)
+    return value.astimezone(UTC)
+
+
+def _validate_task_dates(
+    status: int,
+    start_date: datetime | None,
+    completion_date: datetime | None,
+    path: str,
+    error_type: type[ValueError],
+) -> None:
+    if status == NOT_STARTED and (start_date is not None or completion_date is not None):
+        msg = f"{path}: not-started tasks cannot have dates"
+        raise error_type(msg)
+    if status == ONGOING and completion_date is not None:
+        msg = f"{path}: ongoing tasks cannot have a completion_date"
+        raise error_type(msg)
+    if completion_date is not None and status != COMPLETED:
+        msg = f"{path}: completion_date requires completed status"
+        raise error_type(msg)
+    if (
+        start_date is not None
+        and completion_date is not None
+        and completion_date < start_date
+    ):
+        msg = f"{path}: completion_date cannot be earlier than start_date"
+        raise error_type(msg)
+
+
+def _datetime_to_json(value: datetime) -> str:
+    return value.astimezone(UTC).isoformat().replace("+00:00", "Z")
+
+
+def _datetime_from_json(value: object, path: str) -> datetime:
+    if not isinstance(value, str):
+        msg = f"{path}: must be an ISO timestamp string"
+        raise JSONValidationError(msg)
+    source = value[:-1] + "+00:00" if value.endswith("Z") else value
+    try:
+        parsed = datetime.fromisoformat(source)
+    except ValueError as exc:
+        msg = f"{path}: must be a valid ISO timestamp"
+        raise JSONValidationError(msg) from exc
+    normalized = _normalize_datetime(parsed, path, JSONValidationError)
+    if normalized is None:  # pragma: no cover - parsed is known non-None here.
+        msg = f"{path}: must be an ISO timestamp string"
+        raise JSONValidationError(msg)
+    return normalized
 
 
 def _validate_description(
@@ -1230,7 +1391,7 @@ def _task_values_from_mapping(
     *,
     load_leaf_completion: bool,
 ) -> dict[str, Any]:
-    _validate_keys(mapping, allowed_keys, path)
+    _validate_keys(mapping, allowed_keys, path, required_keys=allowed_keys - TASK_JSON_OPTIONAL_KEYS)
 
     description = _require_str(mapping["description"], f"{path}.description")
     order = _require_int(mapping["order"], f"{path}.order")
@@ -1239,6 +1400,8 @@ def _task_values_from_mapping(
     optional = _require_bool(mapping["optional"], f"{path}.optional")
     milestone = _require_int(mapping["milestone"], f"{path}.milestone")
     completion = _require_number(mapping["completion"], f"{path}.completion")
+    start_date = _optional_datetime_from_mapping(mapping, "start_date", path)
+    completion_date = _optional_datetime_from_mapping(mapping, "completion_date", path)
     _validate_completion(completion, f"{path}.completion")
 
     if status not in VALID_STATUSES:
@@ -1259,6 +1422,13 @@ def _task_values_from_mapping(
     if status == COMPLETED and not optional and priority != DEFAULT_PRIORITY:
         msg = f"{path}.priority: completed mandatory tasks must use default priority"
         raise JSONValidationError(msg)
+    _validate_task_dates(
+        status,
+        start_date,
+        completion_date,
+        f"{path}.date",
+        JSONValidationError,
+    )
     if load_leaf_completion:
         if status == COMPLETED and completion != 100.0:
             msg = f"{path}.completion: completed tasks must use 100.0 completion"
@@ -1280,6 +1450,8 @@ def _task_values_from_mapping(
     }
     if load_leaf_completion:
         values["completion"] = completion
+        values["start_date"] = start_date
+        values["completion_date"] = completion_date
     return values
 
 
@@ -1287,9 +1459,11 @@ def _validate_keys(
     mapping: Mapping[str, object],
     allowed_keys: set[str],
     path: str,
+    required_keys: set[str] | None = None,
 ) -> None:
     keys = set(mapping)
-    missing = allowed_keys - keys
+    required = allowed_keys if required_keys is None else required_keys
+    missing = required - keys
     unknown = keys - allowed_keys
     if missing:
         fields = ", ".join(sorted(missing))
@@ -1334,6 +1508,19 @@ def _require_bool(value: object, path: str) -> bool:
         msg = f"{path}: must be a boolean"
         raise JSONValidationError(msg)
     return value
+
+
+def _optional_datetime_from_mapping(
+    mapping: Mapping[str, object],
+    key: str,
+    path: str,
+) -> datetime | None:
+    if key not in mapping:
+        return None
+    value = mapping[key]
+    if value is None:
+        return None
+    return _datetime_from_json(value, f"{path}.{key}")
 
 
 def _require_number(value: object, path: str) -> float:
