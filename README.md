@@ -2,9 +2,9 @@
 
 `roadmaps` is a Python library for structured, human-editable roadmap files.
 
-It models roadmap items as `Roadmap`, `TaskGroup`, and `Task` objects with status, ordering, priority, optionality, milestones, completion, next-step selection, custom text parsing/rendering, Markdown parsing/rendering, JSON round-trips, and a read-only CLI.
+It models roadmap items as `Roadmap`, `TaskGroup`, and `Task` objects with status, ordering, priority, optionality, milestones, completion, next-step selection, custom text parsing/rendering, Markdown parsing/rendering, JSON round-trips, and a CLI.
 
-The current package is alpha software. The CLI can inspect and convert roadmap files, but it does not mutate files yet.
+The current package is alpha software. The CLI can inspect, convert, initialize, and append top-level tasks to roadmap files.
 
 ## Installation
 
@@ -144,7 +144,7 @@ print(roadmap.to_text())
 
 ## CLI
 
-The `roadmaps` command is read-only. It infers input format from `.roadmap`, `.txt`, `.json`, `.md`, and `.markdown` extensions, or accepts `--format text|json|markdown`.
+The `roadmaps` command infers input format from `.roadmap`, `.txt`, `.json`, `.md`, and `.markdown` extensions, or accepts `--format text|json|markdown`.
 
 Validate a file:
 
@@ -169,6 +169,26 @@ Show completion and task counts:
 ```bash
 roadmaps stats roadmap.json
 ```
+
+Create a new empty roadmap file:
+
+```bash
+roadmaps init roadmap.roadmap
+roadmaps init --format json roadmap.data
+```
+
+`init` refuses to overwrite existing files. Unknown extensions default to text unless `--format` is provided.
+
+Append a top-level task:
+
+```bash
+roadmaps add-task roadmap.roadmap "docs: publish examples" --urgent --milestone 1
+roadmaps add-task roadmap.json "core: partial work" --status ongoing --completion 50.0
+```
+
+`add-task` supports `--order`, `--priority`, `--urgent`, `--optional`, `--milestone`, `--status not-started|ongoing|completed`, and `--completion`.
+
+Interactive editing is planned for a future `roadmaps edit` command. Editor dependencies will be optional and installable with `roadmaps[editor]`.
 
 ## Development
 

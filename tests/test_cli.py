@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from roadmaps import Roadmap
+from roadmaps import ONGOING, Roadmap, Task
 from roadmaps.cli import main
 
 
@@ -57,6 +57,115 @@ def test_render_converts_between_formats(tmp_path: Path, capsys) -> None:
     assert main(["render", str(path), "--to", "markdown"]) == 0
 
     assert capsys.readouterr().out == "- [ ] (900:1) serialize\n"
+
+
+def test_init_creates_text_json_and_markdown_files(tmp_path: Path, capsys) -> None:
+    text_path = tmp_path / "roadmap.roadmap"
+    json_path = tmp_path / "roadmap.json"
+    markdown_path = tmp_path / "roadmap.md"
+
+    assert main(["init", str(text_path)]) == 0
+    assert main(["init", str(json_path)]) == 0
+    assert main(["init", str(markdown_path)]) == 0
+
+    assert text_path.read_text() == ""
+    assert Roadmap.from_json(json_path.read_text()) == Roadmap()
+    assert markdown_path.read_text() == "# Roadmap\n\n"
+    assert "created text roadmap" in capsys.readouterr().out
+
+
+def test_init_defaults_unknown_extension_to_text(tmp_path: Path, capsys) -> None:
+    path = tmp_path / "roadmap.data"
+
+    assert main(["init", str(path)]) == 0
+
+    assert path.read_text() == ""
+    assert "created text roadmap" in capsys.readouterr().out
+
+
+def test_init_supports_format_override(tmp_path: Path) -> None:
+    path = tmp_path / "roadmap.data"
+
+    assert main(["init", "--format", "json", str(path)]) == 0
+
+    assert Roadmap.from_json(path.read_text()) == Roadmap()
+
+
+def test_init_refuses_to_overwrite_existing_file(tmp_path: Path, capsys) -> None:
+    path = tmp_path / "roadmap.roadmap"
+    path.write_text("existing")
+
+    assert main(["init", str(path)]) == 1
+
+    assert path.read_text() == "existing"
+    assert "already exists" in capsys.readouterr().err
+
+
+def test_add_task_appends_top_level_text_task(tmp_path: Path, capsys) -> None:
+    path = tmp_path / "roadmap.roadmap"
+    path.write_text("- [ ] existing")
+
+    assert (
+        main(
+            [
+                "add-task",
+                str(path),
+                "new task",
+                "--order",
+                "1",
+                "--urgent",
+                "--milestone",
+                "2",
+            ]
+        )
+        == 0
+    )
+
+    assert path.read_text() == "- [ ] existing\n1. [ ]! (2) new task"
+    assert "added task" in capsys.readouterr().out
+
+
+def test_add_task_preserves_json_format(tmp_path: Path) -> None:
+    path = tmp_path / "roadmap.json"
+    path.write_text(Roadmap().to_json())
+
+    assert (
+        main(
+            [
+                "add-task",
+                str(path),
+                "partial",
+                "--status",
+                "ongoing",
+                "--completion",
+                "50.0",
+            ]
+        )
+        == 0
+    )
+
+    assert Roadmap.from_json(path.read_text()) == Roadmap(
+        [Task("partial", status=ONGOING, completion=50.0)]
+    )
+
+
+def test_add_task_preserves_markdown_format(tmp_path: Path) -> None:
+    path = tmp_path / "roadmap.md"
+    path.write_text("# Roadmap\n\n")
+
+    assert main(["add-task", str(path), "docs: publish **examples**"]) == 0
+
+    assert path.read_text() == "- [ ] docs: publish **examples**"
+
+
+def test_add_task_rejects_invalid_metadata(tmp_path: Path, capsys) -> None:
+    path = tmp_path / "roadmap.roadmap"
+    path.write_text("")
+
+    assert main(["add-task", str(path), "invalid", "--optional", "--priority", "1"]) == 1
+
+    assert path.read_text() == ""
+    assert "optional tasks" in capsys.readouterr().err
 
 
 def test_stats_outputs_completion_and_counts(tmp_path: Path, capsys) -> None:

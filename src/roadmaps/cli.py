@@ -5,7 +5,7 @@ import sys
 from pathlib import Path
 from typing import TextIO
 
-from roadmaps.core import COMPLETED, Roadmap
+from roadmaps.core import COMPLETED, MAX_PRIORITY, ONGOING, UNSORTED, Roadmap, Task
 
 Format = str
 
@@ -13,6 +13,7 @@ TEXT_EXTENSIONS = {".roadmap", ".txt"}
 JSON_EXTENSIONS = {".json"}
 MARKDOWN_EXTENSIONS = {".md", ".markdown"}
 FORMATS = ("text", "json", "markdown")
+STATUSES = ("not-started", "ongoing", "completed")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -67,6 +68,30 @@ def _build_parser() -> argparse.ArgumentParser:
     render_parser.add_argument("--to", choices=FORMATS, required=True)
     render_parser.set_defaults(handler=_handle_render)
 
+    init_parser = subparsers.add_parser(
+        "init",
+        parents=[format_parent],
+        help="Create a new empty roadmap file.",
+    )
+    init_parser.add_argument("file", type=Path)
+    init_parser.set_defaults(handler=_handle_init)
+
+    add_task_parser = subparsers.add_parser(
+        "add-task",
+        parents=[format_parent],
+        help="Append a top-level task to a roadmap file.",
+    )
+    add_task_parser.add_argument("file", type=Path)
+    add_task_parser.add_argument("description")
+    add_task_parser.add_argument("--order", type=int, default=UNSORTED)
+    add_task_parser.add_argument("--priority", type=int, default=0)
+    add_task_parser.add_argument("--urgent", action="store_true")
+    add_task_parser.add_argument("--optional", action="store_true")
+    add_task_parser.add_argument("--milestone", type=int, default=0)
+    add_task_parser.add_argument("--status", choices=STATUSES, default="not-started")
+    add_task_parser.add_argument("--completion", type=float, default=0.0)
+    add_task_parser.set_defaults(handler=_handle_add_task)
+
     return parser
 
 
@@ -117,6 +142,45 @@ def _handle_render(args: argparse.Namespace) -> int:
     return 0
 
 
+def _handle_init(args: argparse.Namespace) -> int:
+    if args.file.exists():
+        print(f"error: file already exists: {args.file}", file=sys.stderr)
+        return 1
+
+    try:
+        output_format = _detect_format(args.file, args.format, default="text")
+        args.file.write_text(_render_initial_roadmap(output_format))
+    except OSError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    print(f"created {output_format} roadmap: {args.file}")
+    return 0
+
+
+def _handle_add_task(args: argparse.Namespace) -> int:
+    loaded = _load_roadmap(args.file, args.format)
+    if loaded is None:
+        return 1
+
+    roadmap, source_format = loaded
+    try:
+        roadmap.add_step(_task_from_args(args))
+        args.file.write_text(_render_roadmap(roadmap, source_format))
+    except OSError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    print(f"added task to {source_format} roadmap: {args.file}")
+    return 0
+
+
 def _load_roadmap(
     path: Path,
     format_override: Format | None,
@@ -135,7 +199,11 @@ def _load_roadmap(
         return None
 
 
-def _detect_format(path: Path, format_override: Format | None) -> Format:
+def _detect_format(
+    path: Path,
+    format_override: Format | None,
+    default: Format | None = None,
+) -> Format:
     if format_override is not None:
         return format_override
 
@@ -146,6 +214,8 @@ def _detect_format(path: Path, format_override: Format | None) -> Format:
         return "json"
     if suffix in MARKDOWN_EXTENSIONS:
         return "markdown"
+    if default is not None:
+        return default
 
     msg = f"cannot infer format from extension '{suffix or '<none>'}'; use --format"
     raise ValueError(msg)
@@ -173,6 +243,37 @@ def _render_roadmap(roadmap: Roadmap, output_format: Format) -> str:
 
     msg = f"unsupported format: {output_format}"
     raise ValueError(msg)
+
+
+def _render_initial_roadmap(output_format: Format) -> str:
+    if output_format == "markdown":
+        return "# Roadmap\n\n"
+    return _render_roadmap(Roadmap(), output_format)
+
+
+def _task_from_args(args: argparse.Namespace) -> Task:
+    if args.urgent and args.priority:
+        msg = "--urgent cannot be combined with --priority"
+        raise ValueError(msg)
+    priority = MAX_PRIORITY if args.urgent else args.priority
+    status = _status_from_name(args.status)
+    return Task(
+        args.description,
+        order=args.order,
+        priority=priority,
+        status=status,
+        optional=args.optional,
+        milestone=args.milestone,
+        completion=args.completion,
+    )
+
+
+def _status_from_name(name: str) -> int:
+    if name == "not-started":
+        return 0
+    if name == "ongoing":
+        return ONGOING
+    return COMPLETED
 
 
 if __name__ == "__main__":  # pragma: no cover
