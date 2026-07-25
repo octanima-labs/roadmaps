@@ -47,6 +47,12 @@ def test_optional_task_serializes_with_priority_sentinel() -> None:
     assert Task.from_dict(task.to_dict()) == task
 
 
+def test_task_json_round_trip_preserves_inline_markdown_description() -> None:
+    task = Task("docs: use **bold**, `code`, $x$, [links](#), and issue #123")
+
+    assert Task.from_json(task.to_json()) == task
+
+
 def test_task_group_dict_round_trip_uses_tasks_to_imply_group() -> None:
     child = Task("child", status=COMPLETED)
     group = TaskGroup("group", order=1, tasks=[child, Task("optional", optional=True)])

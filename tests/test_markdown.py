@@ -88,6 +88,17 @@ def test_markdown_renders_multiline_descriptions_as_continuations() -> None:
     )
 
 
+def test_markdown_preserves_inline_markdown_description_text() -> None:
+    description = (
+        "docs: use **bold**, *italic*, `code`, $x^2$, "
+        "[links](#), and issue #123"
+    )
+    roadmap = Roadmap([Task(description)])
+
+    assert roadmap.to_markdown() == f"- [ ] {description}"
+    assert Roadmap.from_markdown(roadmap.to_markdown()) == roadmap
+
+
 def test_markdown_minimally_escapes_list_breaking_description_lines() -> None:
     roadmap = Roadmap([Task("- list-like\n1. numbered-like\n**markdown stays**")])
 
@@ -233,6 +244,10 @@ def test_markdown_parser_unescapes_list_breaking_description_lines() -> None:
         "- [~50%] missing decimal completion",
         "- [~50.55%] too precise completion",
         "- [~50.0%] parent\n  - [ ] child",
+        "- [ ] description\n  # heading",
+        "- [ ] description\n  ```python",
+        "- [ ] description\n  > quote",
+        "- [ ] description\n  | --- | --- |",
         "  - [ ] indentation skips root",
         "1. [ ] first\n3. [ ] missing second",
         "# Not Roadmap\n\n- [ ] task",

@@ -31,7 +31,7 @@ source = """
 1. [x] (1) project: create package scaffold
 2. [~]! (2) core: stabilize roadmap model
   1. [~50.0%]^900 parser: implement text format
-  - [ ]? docs: add public examples
+  - [ ]? docs: add **public** examples with [links](#)
 - [ ] backlog: keep unordered ideas
 """.strip()
 
@@ -62,6 +62,8 @@ Syntax summary:
 - Use `!` for urgent priority and `^N` for numeric priority; larger numbers are higher priority.
 - Use `?` for optional tasks; optionality and priority are mutually exclusive.
 - Use `(N)` for positive-integer milestones.
+- Descriptions may contain inline Markdown-like text such as `**bold**`, `*italic*`, inline code, `$math$`, and `[links](#)`.
+- Descriptions do not support headings, blockquotes, fenced code blocks, tables, or nested block lists.
 - Blank lines and `#` comments are ignored.
 
 ## JSON Round-Trips
@@ -86,6 +88,8 @@ JSON deserialization is strict. Decode errors include line and column details, a
 
 Leaf task `completion` is loaded for ongoing tasks. Not-started tasks must use `0.0`, completed tasks must use `100.0`, and ongoing tasks may use `0.0` or a one-decimal value from `1.0` through `99.0`. Group and roadmap completion values are derived from children and recomputed on load.
 
+Descriptions remain plain strings in JSON. Inline rich text is preserved, while block Markdown structures are rejected during model validation.
+
 ## Markdown Rendering
 
 Render a roadmap for display with `to_markdown()` or parse a roadmap section with `from_markdown()`:
@@ -93,8 +97,8 @@ Render a roadmap for display with `to_markdown()` or parse a roadmap section wit
 ```python
 from roadmaps import Roadmap
 
-roadmap = Roadmap.from_text("- [~50.0%]^900 (1) docs: publish examples")
-same_roadmap = Roadmap.from_markdown("- [~50.0%] (900:1) docs: publish examples")
+roadmap = Roadmap.from_text("- [~50.0%]^900 (1) docs: publish **examples**")
+same_roadmap = Roadmap.from_markdown("- [~50.0%] (900:1) docs: publish **examples**")
 
 print(roadmap.to_markdown())
 assert same_roadmap == roadmap
@@ -103,10 +107,10 @@ assert same_roadmap == roadmap
 Markdown output uses GitHub-style task markers and compact metadata tuples:
 
 ```markdown
-- [~50.0%] (900:1) docs: publish examples
+- [~50.0%] (900:1) docs: publish **examples**
 ```
 
-Tuple metadata uses `(priority:milestone)`, `(!:milestone)`, `(:milestone)`, `(priority)`, `(!)`, `(?)`, or `(?:milestone)` as needed. Larger Markdown documents can be parsed when they contain a heading named `Roadmap`; the parser reads the highest-level matching section.
+Tuple metadata uses `(priority:milestone)`, `(!:milestone)`, `(:milestone)`, `(priority)`, `(!)`, `(?)`, or `(?:milestone)` as needed. Inline Markdown in descriptions is preserved as written, but block Markdown structures are invalid. Larger Markdown documents can be parsed when they contain a heading named `Roadmap`; the parser reads the highest-level matching section.
 
 ## Core API
 
@@ -118,7 +122,25 @@ Useful entry points:
 - `Roadmap.from_markdown(source)` and `roadmap.to_markdown()`
 - `roadmap.next_step()` for incomplete leaf tasks ordered by priority/status/order
 - `roadmap.milestones()` for leaf tasks grouped by milestone
+- `Task.to_group()` and `TaskGroup.to_task()` for low-level task/group conversion
+- `roadmap.task_to_group(task)` and `roadmap.group_to_task(group)` for in-place identity-based conversion, including nested items
 - `Task`, `TaskGroup`, and `Roadmap` for direct object construction
+
+Convert an existing task into a group, then flatten it back while preserving metadata:
+
+```python
+from roadmaps import Roadmap, Task
+
+task = Task("parser: add examples", priority=900, milestone=1)
+roadmap = Roadmap([task])
+
+group = roadmap.task_to_group(task, tasks=[Task("write text example")])
+roadmap.group_to_task(group)
+
+print(roadmap.to_text())
+```
+
+`Task -> TaskGroup` preserves description, order, priority, optionality, and milestone. Explicit ongoing completion is dropped because groups derive completion from children. `TaskGroup -> Task` uses the group's derived status, inserts former children as following siblings, and does not renumber existing order values.
 
 ## CLI
 

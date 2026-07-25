@@ -96,6 +96,7 @@ class Task:
         if not isinstance(self.description, str) or not self.description.strip():
             msg = "description must be a non-empty string"
             raise ValueError(msg)
+        _validate_description(self.description, "description", ValueError)
         if self.order < UNSORTED:
             msg = "order must be UNSORTED or a non-negative integer"
             raise ValueError(msg)
@@ -176,6 +177,19 @@ class Task:
         self._completion = 0.0
         if not self.optional:
             self.priority = DEFAULT_PRIORITY
+
+    def to_group(
+        self,
+        tasks: Iterable[Task | TaskGroup] | None = None,
+    ) -> TaskGroup:
+        return TaskGroup(
+            self.description,
+            order=self.order,
+            priority=self.priority,
+            optional=self.optional,
+            milestone=self.milestone,
+            tasks=tasks,
+        )
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -260,6 +274,24 @@ class TaskGroup(Task):
             raise TypeError(msg)
         self.tasks.append(task)
 
+    def task_to_group(
+        self,
+        task: Task,
+        tasks: Iterable[Task | TaskGroup] | None = None,
+    ) -> TaskGroup:
+        group = _task_to_group_in_items(self.tasks, task, tasks)
+        if group is None:
+            msg = "task was not found in this task group"
+            raise ValueError(msg)
+        return group
+
+    def group_to_task(self, group: TaskGroup) -> Task:
+        task = _group_to_task_in_items(self.tasks, group)
+        if task is None:
+            msg = "task group was not found in this task group"
+            raise ValueError(msg)
+        return task
+
     def leaf_tasks(self) -> list[Task]:
         return list(_leaf_tasks(self.tasks))
 
@@ -280,6 +312,16 @@ class TaskGroup(Task):
         for task in self.tasks:
             if not task.is_optional():
                 task.mark_completed()
+
+    def to_task(self) -> Task:
+        return Task(
+            self.description,
+            order=self.order,
+            priority=self.priority,
+            status=self.status,
+            optional=self.optional,
+            milestone=self.milestone,
+        )
 
     def to_dict(self) -> dict[str, Any]:
         data = super().to_dict()
@@ -319,6 +361,24 @@ class Roadmap:
             msg = "task must be a Task or TaskGroup"
             raise TypeError(msg)
         self.steps.append(task)
+
+    def task_to_group(
+        self,
+        task: Task,
+        tasks: Iterable[Task | TaskGroup] | None = None,
+    ) -> TaskGroup:
+        group = _task_to_group_in_items(self.steps, task, tasks)
+        if group is None:
+            msg = "task was not found in this roadmap"
+            raise ValueError(msg)
+        return group
+
+    def group_to_task(self, group: TaskGroup) -> Task:
+        task = _group_to_task_in_items(self.steps, group)
+        if task is None:
+            msg = "task group was not found in this roadmap"
+            raise ValueError(msg)
+        return task
 
     def leaf_tasks(self) -> list[Task]:
         return list(_leaf_tasks(self.steps))
@@ -415,6 +475,42 @@ def _walk_items(items: Iterable[Task | TaskGroup]) -> Iterable[Task | TaskGroup]
             yield from _walk_items(item.tasks)
 
 
+def _task_to_group_in_items(
+    items: list[Task | TaskGroup],
+    target: Task,
+    tasks: Iterable[Task | TaskGroup] | None,
+) -> TaskGroup | None:
+    if isinstance(target, TaskGroup):
+        return None
+
+    for index, item in enumerate(items):
+        if item is target:
+            group = target.to_group(tasks)
+            items[index] = group
+            return group
+        if isinstance(item, TaskGroup):
+            converted = _task_to_group_in_items(item.tasks, target, tasks)
+            if converted is not None:
+                return converted
+    return None
+
+
+def _group_to_task_in_items(
+    items: list[Task | TaskGroup],
+    target: TaskGroup,
+) -> Task | None:
+    for index, item in enumerate(items):
+        if item is target:
+            task = target.to_task()
+            items[index : index + 1] = [task, *target.tasks]
+            return task
+        if isinstance(item, TaskGroup):
+            converted = _group_to_task_in_items(item.tasks, target)
+            if converted is not None:
+                return converted
+    return None
+
+
 def _next_step_key(task: Task) -> tuple[int, int, int, int]:
     status_rank = 0 if task.status == ONGOING else 1
     order_rank = 0 if task.order != UNSORTED else 1
@@ -465,6 +561,41 @@ def _format_completion_percent(completion: float) -> str:
     return f"{completion:.1f}%"
 
 
+def _validate_description(
+    description: str,
+    path: str,
+    error_type: type[ValueError],
+) -> None:
+    for line in description.splitlines():
+        _validate_description_line(line, path, error_type)
+
+
+def _validate_description_line(
+    line: str,
+    path: str,
+    error_type: type[ValueError],
+) -> None:
+    stripped = line.strip()
+    if not stripped:
+        return
+    if stripped.startswith("#"):
+        msg = f"{path}: headings are not allowed in task descriptions"
+        raise error_type(msg)
+    if stripped.startswith((">", "```", "~~~")):
+        msg = f"{path}: block Markdown is not allowed in task descriptions"
+        raise error_type(msg)
+    if _is_markdown_table_separator(stripped):
+        msg = f"{path}: Markdown tables are not allowed in task descriptions"
+        raise error_type(msg)
+
+
+def _is_markdown_table_separator(line: str) -> bool:
+    if "|" not in line:
+        return False
+    cells = [cell.strip() for cell in line.strip("|").split("|")]
+    return all(re.fullmatch(r":?-{3,}:?", cell) for cell in cells if cell)
+
+
 def _parse_text_nodes(source: str) -> list[Task | TaskGroup]:
     roots: list[_TextNode] = []
     stack: list[tuple[int, _TextNode]] = []
@@ -476,6 +607,9 @@ def _parse_text_nodes(source: str) -> list[Task | TaskGroup]:
 
         stripped = raw_line.strip()
         if not stripped or stripped.startswith("#"):
+            if stripped.startswith("#") and _is_description_continuation(stack, raw_line):
+                msg = f"line {line_number}: headings are not allowed in task descriptions"
+                raise ValueError(msg)
             continue
 
         indent = len(raw_line) - len(raw_line.lstrip(" "))
@@ -626,7 +760,21 @@ def _append_text_continuation(
     if level <= parent_level:
         msg = f"line {line_number}: expected a task line"
         raise ValueError(msg)
-    parent.description = f"{parent.description}\n{raw_line.strip()}"
+    line = _unescape_text_description_line(raw_line.strip())
+    _validate_description_line(line, f"line {line_number}", ValueError)
+    parent.description = f"{parent.description}\n{line}"
+
+
+def _is_description_continuation(
+    stack: list[tuple[int, _TextNode]],
+    raw_line: str,
+) -> bool:
+    if not stack:
+        return False
+    indent = len(raw_line) - len(raw_line.lstrip(" "))
+    if indent % 2 != 0:
+        return False
+    return indent // 2 > stack[-1][0]
 
 
 def _validate_text_order_sequence(nodes: list[_TextNode]) -> None:
@@ -685,7 +833,10 @@ def _render_text_item(item: Task | TaskGroup, level: int) -> str:
     ]
 
     continuation_indent = f"{indent}  "
-    lines.extend(f"{continuation_indent}{line}" for line in description_lines[1:])
+    lines.extend(
+        f"{continuation_indent}{_escape_text_description_line(line)}"
+        for line in description_lines[1:]
+    )
     if isinstance(item, TaskGroup):
         lines.extend(_render_text_item(child, level + 1) for child in item.tasks)
     return "\n".join(lines)
@@ -715,6 +866,18 @@ def _text_milestone_marker(item: Task | TaskGroup) -> str:
     if item.milestone == NO_MILESTONE:
         return ""
     return f" ({item.milestone})"
+
+
+def _escape_text_description_line(line: str) -> str:
+    if _is_list_breaking_description_line(line):
+        return f"\\{line}"
+    return line
+
+
+def _unescape_text_description_line(line: str) -> str:
+    if re.match(r"^\\([*+-]|\d+[.)])\s", line):
+        return line[1:]
+    return line
 
 
 def _parse_markdown_nodes(source: str) -> list[Task | TaskGroup]:
@@ -876,8 +1039,10 @@ def _append_markdown_continuation(
     if level <= parent_level:
         msg = f"line {line_number}: expected a Markdown roadmap task line"
         raise ValueError(msg)
+    line = _unescape_markdown_description_line(raw_line.strip())
+    _validate_description_line(line, f"line {line_number}", ValueError)
     parent.description = (
-        f"{parent.description}\n{_unescape_markdown_description_line(raw_line.strip())}"
+        f"{parent.description}\n{line}"
     )
 
 
@@ -932,7 +1097,7 @@ def _markdown_metadata_marker(item: Task | TaskGroup) -> str:
 
 def _escape_markdown_description_line(line: str) -> str:
     # Keep user Markdown intact except escapes that prevent accidental new lists.
-    if re.match(r"^([*+-]|\d+[.)])\s", line):
+    if _is_list_breaking_description_line(line):
         return f"\\{line}"
     return line
 
@@ -941,6 +1106,10 @@ def _unescape_markdown_description_line(line: str) -> str:
     if re.match(r"^\\([*+-]|\d+[.)])\s", line):
         return line[1:]
     return line
+
+
+def _is_list_breaking_description_line(line: str) -> bool:
+    return re.match(r"^([*+-]|\d+[.)])\s", line) is not None
 
 
 def _loads_json(source: str) -> object:

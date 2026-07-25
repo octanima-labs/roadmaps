@@ -35,6 +35,30 @@ def test_task_rejects_optional_positive_priority_conflict() -> None:
         Task("conflicting metadata", priority=1, optional=True)
 
 
+def test_task_description_allows_inline_markdown_text() -> None:
+    description = "docs: use **bold**, *italic*, `code`, $x^2$, and [links](#)"
+
+    task = Task(description)
+
+    assert task.description == description
+
+
+@pytest.mark.parametrize(
+    "description",
+    [
+        "# heading",
+        "description\n## heading",
+        "description\n```python",
+        "description\n~~~",
+        "description\n> quote",
+        "description\n| --- | --- |",
+    ],
+)
+def test_task_description_rejects_block_markdown(description: str) -> None:
+    with pytest.raises(ValueError, match="description"):
+        Task(description)
+
+
 def test_optional_priority_marker_sets_optional_task() -> None:
     task = Task("optional task", priority=OPTIONAL_TASK)
 
@@ -165,6 +189,117 @@ def test_milestones_group_nested_items_and_filter_completion() -> None:
     assert [item.description for item in roadmap.milestones(completed=False)[1]] == [
         "pending",
     ]
+
+
+def test_task_to_group_preserves_metadata_and_drops_completion() -> None:
+    child = Task("child")
+    task = Task(
+        "partial",
+        order=2,
+        priority=MAX_PRIORITY,
+        status=ONGOING,
+        milestone=3,
+        completion=50.0,
+    )
+
+    group = task.to_group(tasks=[child])
+
+    assert group.description == "partial"
+    assert group.order == 2
+    assert group.priority == MAX_PRIORITY
+    assert group.milestone == 3
+    assert group.status == NOT_STARTED
+    assert group.completion == 0.0
+    assert group.tasks == [child]
+
+
+def test_group_to_task_preserves_metadata_and_uses_derived_status() -> None:
+    group = TaskGroup(
+        "group",
+        order=1,
+        priority=900,
+        milestone=2,
+        tasks=[Task("done", status=COMPLETED), Task("pending")],
+    )
+
+    task = group.to_task()
+
+    assert task.description == "group"
+    assert task.order == 1
+    assert task.priority == 900
+    assert task.status == ONGOING
+    assert task.completion == 0.0
+    assert task.milestone == 2
+
+
+def test_roadmap_task_to_group_replaces_nested_task_by_identity() -> None:
+    target = Task("target", order=1, priority=500, milestone=2)
+    equal_but_not_identical = Task("target", order=1, priority=500, milestone=2)
+    child = Task("child")
+    parent = TaskGroup("parent", tasks=[equal_but_not_identical, target])
+    roadmap = Roadmap([parent])
+
+    group = roadmap.task_to_group(target, tasks=[child])
+
+    assert group == TaskGroup(
+        "target",
+        order=1,
+        priority=500,
+        milestone=2,
+        tasks=[child],
+    )
+    assert parent.tasks == [equal_but_not_identical, group]
+    assert parent.tasks[0] is equal_but_not_identical
+
+
+def test_roadmap_group_to_task_flattens_children_as_following_siblings() -> None:
+    first = Task("first", order=1)
+    second = Task("second", order=2)
+    group = TaskGroup("group", order=1, milestone=4, tasks=[first, second])
+    after = Task("after", order=2)
+    roadmap = Roadmap([group, after])
+
+    task = roadmap.group_to_task(group)
+
+    assert task == Task("group", order=1, milestone=4)
+    assert roadmap.steps == [task, first, second, after]
+
+
+def test_task_group_conversion_helpers_work_for_nested_items() -> None:
+    leaf = Task("leaf")
+    nested_group = TaskGroup("nested", tasks=[leaf])
+    parent = TaskGroup("parent", tasks=[nested_group])
+
+    converted_group = parent.task_to_group(leaf, tasks=[Task("new child")])
+
+    assert nested_group.tasks == [converted_group]
+
+    converted_task = parent.group_to_task(converted_group)
+
+    assert nested_group.tasks == [converted_task, Task("new child")]
+
+
+def test_conversion_helpers_raise_when_target_is_not_found() -> None:
+    roadmap = Roadmap([Task("existing")])
+
+    with pytest.raises(ValueError, match="not found"):
+        roadmap.task_to_group(Task("missing"))
+
+    with pytest.raises(ValueError, match="not found"):
+        roadmap.group_to_task(TaskGroup("missing"))
+
+
+def test_converted_items_round_trip_through_formats() -> None:
+    target = Task("target", priority=900, milestone=1)
+    child = Task("child")
+    roadmap = Roadmap([target])
+
+    group = roadmap.task_to_group(target, tasks=[child])
+    roadmap.group_to_task(group)
+
+    assert Roadmap.from_text(roadmap.to_text()) == roadmap
+    assert Roadmap.from_markdown(roadmap.to_markdown()) == roadmap
+    assert Roadmap.from_json(roadmap.to_json()) == roadmap
 
 
 def test_add_step_accepts_top_level_tasks_only() -> None:

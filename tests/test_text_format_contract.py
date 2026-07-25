@@ -58,6 +58,25 @@ def test_parse_accepts_omitted_status_and_canonicalizes_defaults() -> None:
     )
 
 
+def test_parse_and_render_preserves_inline_markdown_description_text() -> None:
+    source = (
+        "- [ ] docs: use **bold**, *italic*, `code`, $x^2$, "
+        "[links](#), and issue #123"
+    )
+
+    roadmap = Roadmap.from_text(source)
+
+    assert roadmap == Roadmap(
+        [
+            Task(
+                "docs: use **bold**, *italic*, `code`, $x^2$, "
+                "[links](#), and issue #123"
+            )
+        ]
+    )
+    assert roadmap.to_text() == source
+
+
 def test_render_emits_canonical_status_and_marker_positions() -> None:
     roadmap = Roadmap(
         [
@@ -154,6 +173,17 @@ def test_task_line_wins_over_continuation_line() -> None:
     )
 
 
+def test_text_render_escapes_list_like_continuation_lines() -> None:
+    roadmap = Roadmap([Task("description\n- list-like\n1. numbered-like")])
+
+    assert roadmap.to_text() == (
+        "- [ ] description\n"
+        "  \\- list-like\n"
+        "  \\1. numbered-like"
+    )
+    assert Roadmap.from_text(roadmap.to_text()) == roadmap
+
+
 def test_render_preserves_list_order_instead_of_sorting_by_order() -> None:
     roadmap = Roadmap([Task("second", order=2), Task("first", order=1), Task("loose")])
 
@@ -243,6 +273,10 @@ def test_parent_milestone_inherits_to_children_when_omitted() -> None:
         "- [~50%] missing decimal completion",
         "- [~50.55%] too precise completion",
         "- [~50.0%] parent\n  - [ ] child",
+        "- [ ] description\n  # heading",
+        "- [ ] description\n  ```python",
+        "- [ ] description\n  > quote",
+        "- [ ] description\n  | --- | --- |",
     ],
 )
 def test_parse_rejects_invalid_text_syntax(source: str) -> None:
