@@ -7,6 +7,7 @@ from typing import TextIO
 
 from roadmaps.core import (
     COMPLETED,
+    DEFAULT_PRIORITY,
     MAX_PRIORITY,
     NO_MILESTONE,
     ONGOING,
@@ -34,7 +35,7 @@ def main(argv: list[str] | None = None) -> int:
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="roadmaps",
-        description="Inspect roadmap files without modifying them.",
+        description="Inspect and update roadmap files.",
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
     format_parent = argparse.ArgumentParser(add_help=False)
@@ -76,6 +77,21 @@ def _build_parser() -> argparse.ArgumentParser:
     render_parser.add_argument("file", type=Path)
     render_parser.add_argument("--to", choices=FORMATS, required=True)
     render_parser.set_defaults(handler=_handle_render)
+
+    show_parser = subparsers.add_parser(
+        "show",
+        parents=[format_parent],
+        help="Show roadmap items matching filters.",
+    )
+    show_parser.add_argument("file", type=Path)
+    show_parser.add_argument("--to", choices=FORMATS, help="Output format.")
+    show_parser.add_argument("-C", "--completed", action="store_true")
+    show_parser.add_argument("-U", "--uncompleted", action="store_true")
+    show_parser.add_argument("-O", "--ongoing", action="store_true")
+    show_parser.add_argument("-o", "--optional", action="store_true")
+    show_parser.add_argument("-A", "--all", action="store_true")
+    show_parser.add_argument("-c", "--category", nargs="+", dest="categories")
+    show_parser.set_defaults(handler=_handle_show)
 
     init_parser = subparsers.add_parser(
         "init",
@@ -154,6 +170,29 @@ def _handle_render(args: argparse.Namespace) -> int:
 
     roadmap, _source_format = loaded
     print(_render_roadmap(roadmap, args.to))
+    return 0
+
+
+def _handle_show(args: argparse.Namespace) -> int:
+    loaded = _load_roadmap(args.file, args.format)
+    if loaded is None:
+        return 1
+
+    roadmap, source_format = loaded
+    matches = roadmap.filter_items(
+        completed=args.completed,
+        uncompleted=args.uncompleted,
+        ongoing=args.ongoing,
+        optional=args.optional,
+        all=args.all,
+        categories=args.categories,
+    )
+    if not matches:
+        print("no matching tasks")
+        return 0
+
+    output_format = args.to or source_format
+    print(_render_roadmap(Roadmap(_flat_show_items(matches)), output_format))
     return 0
 
 
@@ -266,6 +305,27 @@ def _render_initial_roadmap(output_format: Format, *, example: bool = False) -> 
         body = roadmap.to_markdown()
         return "# Roadmap\n\n" if not body else f"# Roadmap\n\n{body}"
     return _render_roadmap(roadmap, output_format)
+
+
+def _flat_show_items(items: list[Task | TaskGroup]) -> list[Task]:
+    return [_show_item_snapshot(item) for item in items]
+
+
+def _show_item_snapshot(item: Task | TaskGroup) -> Task:
+    if not isinstance(item, TaskGroup):
+        return item
+
+    priority = item.priority
+    if item.status == COMPLETED and not item.optional:
+        priority = DEFAULT_PRIORITY
+    return Task(
+        item.description,
+        order=item.order,
+        priority=priority,
+        status=item.status,
+        optional=item.optional,
+        milestone=item.milestone,
+    )
 
 
 def _example_roadmap() -> Roadmap:

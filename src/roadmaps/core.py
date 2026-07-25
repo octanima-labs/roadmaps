@@ -416,6 +416,28 @@ class Roadmap:
             tasks = [task for task in tasks if description in task.description]
         return tasks
 
+    def filter_items(
+        self,
+        *,
+        completed: bool = False,
+        uncompleted: bool = False,
+        ongoing: bool = False,
+        optional: bool = False,
+        all: bool = False,
+        categories: Iterable[str] | None = None,
+    ) -> list[Task | TaskGroup]:
+        items = list(_walk_items(self.steps))
+        if all:
+            return items
+
+        category_set = {category.casefold() for category in categories or []}
+        status_filter = _filter_statuses(completed, uncompleted, ongoing)
+        return [
+            item
+            for item in items
+            if _matches_filter_item(item, status_filter, optional, category_set)
+        ]
+
     def next_step(self) -> list[Task]:
         return sorted(
             (task for task in self.leaf_tasks() if task.status != COMPLETED),
@@ -473,6 +495,46 @@ def _walk_items(items: Iterable[Task | TaskGroup]) -> Iterable[Task | TaskGroup]
         yield item
         if isinstance(item, TaskGroup):
             yield from _walk_items(item.tasks)
+
+
+def _filter_statuses(
+    completed: bool,
+    uncompleted: bool,
+    ongoing: bool,
+) -> set[int] | None:
+    statuses: set[int] = set()
+    if completed:
+        statuses.add(COMPLETED)
+    if uncompleted:
+        statuses.update({NOT_STARTED, ONGOING})
+    if ongoing:
+        statuses.add(ONGOING)
+    return statuses or None
+
+
+def _matches_filter_item(
+    item: Task | TaskGroup,
+    statuses: set[int] | None,
+    include_optional: bool,
+    categories: set[str],
+) -> bool:
+    if categories and _description_category(item.description) not in categories:
+        return False
+
+    status_matches = statuses is None or item.status in statuses
+    optional_matches = include_optional and item.is_optional()
+    if not status_matches and not optional_matches:
+        return False
+
+    return include_optional or not item.is_optional()
+
+
+def _description_category(description: str) -> str | None:
+    first_line = description.splitlines()[0]
+    match = re.match(r"^(?P<category>[A-Za-z][\w-]*(?:\([^):]+\))?):", first_line)
+    if match is None:
+        return None
+    return match.group("category").casefold()
 
 
 def _task_to_group_in_items(

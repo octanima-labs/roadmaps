@@ -122,6 +122,7 @@ Useful entry points:
 - `Roadmap.from_markdown(source)` and `roadmap.to_markdown()`
 - `roadmap.next_step()` for incomplete leaf tasks ordered by priority/status/order
 - `roadmap.milestones()` for leaf tasks grouped by milestone
+- `roadmap.filter_items()` for status, optionality, and conventional category filtering across tasks and groups
 - `Task.to_group()` and `TaskGroup.to_task()` for low-level task/group conversion
 - `roadmap.task_to_group(task)` and `roadmap.group_to_task(group)` for in-place identity-based conversion, including nested items
 - `Task`, `TaskGroup`, and `Roadmap` for direct object construction
@@ -169,6 +170,16 @@ Show completion and task counts:
 ```bash
 roadmaps stats roadmap.json
 ```
+
+Filter roadmap items:
+
+```bash
+roadmaps show roadmap.roadmap --uncompleted
+roadmaps show roadmap.md --completed --ongoing --optional
+roadmaps show roadmap.json --category docs 'feat(parser)' --to markdown
+```
+
+`show` returns flat `Task` and `TaskGroup` matches in traversal order. Status filters combine by union, optional items are hidden unless `--optional` or `--all` is supplied, categories match conventional prefixes such as `docs:` or `feat(parser):`, and no matches returns `no matching tasks` with exit code `0`.
 
 Create a new empty roadmap file:
 

@@ -61,6 +61,99 @@ def test_render_converts_between_formats(tmp_path: Path, capsys) -> None:
     assert capsys.readouterr().out == "- [ ] (900:1) serialize\n"
 
 
+def test_show_outputs_matching_items_in_source_format(tmp_path: Path, capsys) -> None:
+    path = tmp_path / "roadmap.roadmap"
+    path.write_text(
+        """
+- [ ] docs: parent
+  - [ ] docs: child
+- [ ] core: sibling
+""".strip()
+    )
+
+    assert main(["show", str(path), "-c", "docs"]) == 0
+
+    assert capsys.readouterr().out == (
+        "- [ ] docs: parent\n"
+        "- [ ] docs: child\n"
+    )
+
+
+def test_show_supports_output_format_override(tmp_path: Path, capsys) -> None:
+    path = tmp_path / "roadmap.roadmap"
+    path.write_text("- [ ] docs: task")
+
+    assert main(["show", str(path), "-c", "docs", "--to", "markdown"]) == 0
+
+    assert capsys.readouterr().out == "- [ ] docs: task\n"
+
+
+def test_show_status_filters_and_optional_union(tmp_path: Path, capsys) -> None:
+    path = tmp_path / "roadmap.roadmap"
+    path.write_text(
+        """
+- [x] done
+- [~] ongoing
+- [ ] pending
+- [ ]? optional
+""".strip()
+    )
+
+    assert main(["show", str(path), "--completed", "--ongoing", "--optional"]) == 0
+
+    assert capsys.readouterr().out == (
+        "- [x] done\n"
+        "- [~] ongoing\n"
+        "- [ ]? optional\n"
+    )
+
+
+def test_show_uncompleted_excludes_completed_and_optional_by_default(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    path = tmp_path / "roadmap.roadmap"
+    path.write_text("- [x] done\n- [~] ongoing\n- [ ] pending\n- [ ]? optional")
+
+    assert main(["show", str(path), "--uncompleted"]) == 0
+
+    assert capsys.readouterr().out == (
+        "- [~] ongoing\n"
+        "- [ ] pending\n"
+    )
+
+
+def test_show_all_ignores_filters(tmp_path: Path, capsys) -> None:
+    path = tmp_path / "roadmap.roadmap"
+    path.write_text("- [ ]? optional\n- [ ] uncategorized")
+
+    assert main(["show", str(path), "--all", "-c", "missing"]) == 0
+
+    assert capsys.readouterr().out == (
+        "- [ ]? optional\n"
+        "- [ ] uncategorized\n"
+    )
+
+
+def test_show_no_matches_returns_success_message(tmp_path: Path, capsys) -> None:
+    path = tmp_path / "roadmap.roadmap"
+    path.write_text("- [ ] docs: task")
+
+    assert main(["show", str(path), "-c", "missing"]) == 0
+
+    assert capsys.readouterr().out == "no matching tasks\n"
+
+
+def test_show_supports_json_input_and_output(tmp_path: Path, capsys) -> None:
+    path = tmp_path / "roadmap.json"
+    path.write_text(Roadmap.from_text("- [ ] docs: task\n- [ ] core: hidden").to_json())
+
+    assert main(["show", str(path), "-c", "docs"]) == 0
+
+    output = capsys.readouterr().out
+    assert Roadmap.from_json(output) == Roadmap([Task("docs: task")])
+
+
 def test_init_creates_text_json_and_markdown_files(tmp_path: Path, capsys) -> None:
     text_path = tmp_path / "roadmap.roadmap"
     json_path = tmp_path / "roadmap.json"

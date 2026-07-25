@@ -173,6 +173,53 @@ def test_next_step_returns_incomplete_leaf_tasks_in_priority_order() -> None:
     ]
 
 
+def test_filter_items_matches_groups_and_tasks_in_traversal_order() -> None:
+    child = Task("docs: child")
+    group = TaskGroup("docs: parent", tasks=[child])
+    roadmap = Roadmap([group, Task("core: sibling")])
+
+    assert roadmap.filter_items(categories=["docs"]) == [group, child]
+
+
+def test_filter_items_status_filters_use_union() -> None:
+    completed = Task("done", status=COMPLETED)
+    ongoing = Task("ongoing", status=ONGOING)
+    pending = Task("pending")
+    roadmap = Roadmap([completed, ongoing, pending])
+
+    assert roadmap.filter_items(completed=True, ongoing=True) == [completed, ongoing]
+    assert roadmap.filter_items(uncompleted=True) == [ongoing, pending]
+
+
+def test_filter_items_hides_optional_by_default_and_optional_is_union() -> None:
+    completed = Task("done", status=COMPLETED)
+    optional = Task("optional", optional=True)
+    roadmap = Roadmap([completed, optional])
+
+    assert roadmap.filter_items(completed=True) == [completed]
+    assert roadmap.filter_items(completed=True, optional=True) == [completed, optional]
+
+
+def test_filter_items_all_ignores_other_filters() -> None:
+    optional = Task("docs: optional", optional=True)
+    uncategorized = Task("uncategorized")
+    roadmap = Roadmap([optional, uncategorized])
+
+    assert roadmap.filter_items(all=True, categories=["missing"]) == [
+        optional,
+        uncategorized,
+    ]
+
+
+def test_filter_items_categories_match_conventional_prefix_case_insensitively() -> None:
+    docs = Task("Docs: publish examples")
+    scoped = Task("feat(parser): parse categories")
+    uncategorized = Task("no category")
+    roadmap = Roadmap([docs, scoped, uncategorized])
+
+    assert roadmap.filter_items(categories=["docs", "FEAT(parser)"]) == [docs, scoped]
+
+
 def test_milestones_group_nested_items_and_filter_completion() -> None:
     completed = Task("completed", milestone=1, status=COMPLETED)
     pending = Task("pending", milestone=1)
