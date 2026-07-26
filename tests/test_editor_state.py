@@ -46,13 +46,13 @@ def test_move_selection_clamps_without_marking_dirty() -> None:
     assert state.dirty is False
 
 
-def test_hide_completed_resets_selection_to_first_visible_and_marks_dirty() -> None:
+def test_hide_completed_preserves_visible_selection_and_marks_dirty() -> None:
     state = EditorState(
         Roadmap(
             [
+                Task("first"),
                 Task("done", status=COMPLETED),
-                Task("pending"),
-                Task("also done", status=COMPLETED),
+                Task("second"),
             ]
         )
     )
@@ -62,8 +62,51 @@ def test_hide_completed_resets_selection_to_first_visible_and_marks_dirty() -> N
 
     assert state.hide_completed is True
     assert state.dirty is True
-    assert [row.description for row in state.rows] == ["pending"]
+    assert [row.description for row in state.rows] == ["first", "second"]
+    assert state.selected_path == (2,)
+
+
+def test_hide_completed_selects_next_visible_row_when_selected_row_is_hidden() -> None:
+    state = EditorState(
+        Roadmap(
+            [
+                Task("done", status=COMPLETED),
+                Task("pending"),
+                Task("second"),
+            ]
+        )
+    )
+
+    state.toggle_hide_completed()
+
+    assert [row.description for row in state.rows] == ["pending", "second"]
     assert state.selected_path == (1,)
+
+
+def test_hide_completed_selects_previous_visible_row_without_next_row() -> None:
+    state = EditorState(
+        Roadmap(
+            [
+                Task("pending"),
+                Task("done", status=COMPLETED),
+            ]
+        )
+    )
+    state.select_path((1,))
+
+    state.toggle_hide_completed()
+
+    assert [row.description for row in state.rows] == ["pending"]
+    assert state.selected_path == (0,)
+
+
+def test_hide_completed_clears_selection_when_all_rows_are_hidden() -> None:
+    state = EditorState(Roadmap([Task("done", status=COMPLETED)]))
+
+    state.toggle_hide_completed()
+
+    assert state.rows == []
+    assert state.selected_path is None
 
 
 def test_insert_unsorted_task_after_selected_sibling() -> None:

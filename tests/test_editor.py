@@ -2,7 +2,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
-from roadmaps import COMPLETED, Roadmap, Task, TaskGroup
+from roadmaps import COMPLETED, NOT_STARTED, Roadmap, Task, TaskGroup
 from roadmaps._documents import Document, load_document
 from roadmaps.editor import _top_bar_text, _tree_description, create_editor_app
 
@@ -92,7 +92,7 @@ def test_editor_actions_move_selection_and_toggle_completed_visibility() -> None
         Document(Roadmap([Task("first"), Task("done", status=COMPLETED)]), "text")
     )
     _wire_fake_widgets(app)
-    app._refresh_table(reset_selection=True)
+    app._refresh_table()
 
     app.action_cursor_down()
     assert app.state.selected_path == (1,)
@@ -108,7 +108,7 @@ def test_editor_actions_move_selection_and_toggle_completed_visibility() -> None
 def test_editor_insert_enters_description_edit_mode() -> None:
     app = create_editor_app(Document(Roadmap([Task("first")]), "text"))
     _wire_fake_widgets(app)
-    app._refresh_table(reset_selection=True)
+    app._refresh_table()
 
     app.action_insert_unsorted()
 
@@ -122,10 +122,27 @@ def test_editor_insert_enters_description_edit_mode() -> None:
     assert app.edit_input.styles.display == "block"
 
 
+def test_editor_insert_uses_visual_table_cursor_when_state_is_stale() -> None:
+    app = create_editor_app(Document(Roadmap([Task("first"), Task("second")]), "text"))
+    _wire_fake_widgets(app)
+    app._refresh_table()
+    app.table.cursor_row = 1
+    app.state.selected_path = (0,)
+
+    app.action_insert_unsorted()
+
+    assert [task.description for task in app.document.roadmap.steps] == [
+        "first",
+        "second",
+        "New task",
+    ]
+    assert app.state.selected_path == (2,)
+
+
 def test_editor_description_edit_commit_and_cancel() -> None:
     app = create_editor_app(Document(Roadmap([Task("first")]), "text"))
     _wire_fake_widgets(app)
-    app._refresh_table(reset_selection=True)
+    app._refresh_table()
 
     app.action_edit_description()
     app.edit_input.value = "updated"
@@ -147,7 +164,7 @@ def test_editor_description_edit_commit_and_cancel() -> None:
 def test_editor_rejects_completed_description_edit() -> None:
     app = create_editor_app(Document(Roadmap([Task("done", status=COMPLETED)]), "text"))
     _wire_fake_widgets(app)
-    app._refresh_table(reset_selection=True)
+    app._refresh_table()
 
     app.action_edit_description()
 
@@ -155,17 +172,42 @@ def test_editor_rejects_completed_description_edit() -> None:
     assert app.message_bar.value == "completed rows are read-only"
 
 
-def test_editor_cycle_status_refreshes_and_resets_selection() -> None:
+def test_editor_cycle_status_refreshes_and_preserves_visible_selection() -> None:
     app = create_editor_app(Document(Roadmap([Task("first"), Task("second")]), "text"))
     _wire_fake_widgets(app)
-    app._refresh_table(reset_selection=True)
+    app._refresh_table()
     app.action_cursor_down()
 
     app.action_cycle_status()
 
     assert app.document.roadmap.steps[1].status != 0
-    assert app.state.selected_path == (0,)
+    assert app.state.selected_path == (1,)
+    assert app.table.cursor_row == 1
     assert app.message_bar.value == "status updated"
+
+
+def test_editor_cycle_status_uses_visual_table_cursor_when_state_is_stale() -> None:
+    app = create_editor_app(Document(Roadmap([Task("first"), Task("second")]), "text"))
+    _wire_fake_widgets(app)
+    app._refresh_table()
+    app.table.cursor_row = 1
+    app.state.selected_path = (0,)
+
+    app.action_cycle_status()
+
+    assert app.document.roadmap.steps[0].status == NOT_STARTED
+    assert app.document.roadmap.steps[1].status != 0
+    assert app.state.selected_path == (1,)
+
+
+def test_editor_highlight_event_updates_internal_selection() -> None:
+    app = create_editor_app(Document(Roadmap([Task("first"), Task("second")]), "text"))
+    _wire_fake_widgets(app)
+    app._refresh_table()
+
+    app.on_data_table_row_highlighted(SimpleNamespace(cursor_row=1))
+
+    assert app.state.selected_path == (1,)
 
 
 def test_editor_save_named_document_and_defer_unnamed_save(tmp_path: Path) -> None:
@@ -192,7 +234,7 @@ def test_editor_save_after_edit_updates_document(tmp_path: Path) -> None:
     path.write_text("- [ ] old")
     app = create_editor_app(load_document(path))
     _wire_fake_widgets(app)
-    app._refresh_table(reset_selection=True)
+    app._refresh_table()
     app.action_edit_description()
     app.edit_input.value = "new"
 

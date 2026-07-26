@@ -85,7 +85,7 @@ def create_editor_app(document: Document) -> Any:
             if table is None:
                 table = self.query_one("#roadmap-grid", data_table)
                 self.table = table
-            self._refresh_table(reset_selection=True)
+            self._refresh_table()
 
         def action_cursor_up(self) -> None:
             self._exit_edit_mode(commit=False)
@@ -98,30 +98,35 @@ def create_editor_app(document: Document) -> Any:
                 self._select_current_row()
 
         def action_edit_description(self) -> None:
+            self._sync_selection_from_table_cursor()
             self._start_description_edit()
 
         def action_insert_unsorted(self) -> None:
             self._exit_edit_mode(commit=False)
+            self._sync_selection_from_table_cursor()
             self.state.insert_unsorted_task()
-            self._refresh_table(reset_selection=False)
+            self._refresh_table()
             self._start_description_edit()
 
         def action_insert_sorted(self) -> None:
             self._exit_edit_mode(commit=False)
+            self._sync_selection_from_table_cursor()
             self.state.insert_sorted_task()
-            self._refresh_table(reset_selection=False)
+            self._refresh_table()
             self._start_description_edit()
 
         def action_cycle_status(self) -> None:
             self._exit_edit_mode(commit=False)
+            self._sync_selection_from_table_cursor()
             if self.state.cycle_selected_status():
-                self._refresh_table(reset_selection=True)
+                self._refresh_table()
                 self._set_message("status updated")
 
         def action_toggle_hide_completed(self) -> None:
             self._exit_edit_mode(commit=False)
+            self._sync_selection_from_table_cursor()
             self.state.toggle_hide_completed()
-            self._refresh_table(reset_selection=True)
+            self._refresh_table()
             self._set_message(
                 "completed rows hidden"
                 if self.state.hide_completed
@@ -149,6 +154,9 @@ def create_editor_app(document: Document) -> Any:
         def on_input_submitted(self, event: Any) -> None:
             if event.input is self.edit_input:
                 self._exit_edit_mode(commit=True)
+
+        def on_data_table_row_highlighted(self, event: Any) -> None:
+            self._sync_selection_from_cursor_row(event.cursor_row)
 
         def key_escape(self) -> None:
             self._exit_edit_mode(commit=False)
@@ -181,7 +189,7 @@ def create_editor_app(document: Document) -> Any:
                     self._set_message(str(exc))
                     return
                 if changed:
-                    self._refresh_table(reset_selection=True)
+                    self._refresh_table()
                     self._set_message("description updated")
                 else:
                     self._set_message("description unchanged")
@@ -193,10 +201,8 @@ def create_editor_app(document: Document) -> Any:
             self.editing = False
             self._table().focus()
 
-        def _refresh_table(self, *, reset_selection: bool) -> None:
-            if reset_selection:
-                rows = self.state.rows
-                self.state.selected_path = rows[0].path if rows else None
+        def _refresh_table(self) -> None:
+            self.state.repair_selection()
             _populate_table(self._table(), self.state, text)
             self._select_current_row()
             self._refresh_top_bar()
@@ -210,6 +216,17 @@ def create_editor_app(document: Document) -> Any:
                 if row.path == self.state.selected_path:
                     table.move_cursor(row=index, animate=False)
                     return
+
+        def _sync_selection_from_table_cursor(self) -> None:
+            self._sync_selection_from_cursor_row(self._table().cursor_row)
+
+        def _sync_selection_from_cursor_row(self, cursor_row: int) -> None:
+            rows = self.state.rows
+            if not rows:
+                self.state.selected_path = None
+                return
+            if 0 <= cursor_row < len(rows):
+                self.state.selected_path = rows[cursor_row].path
 
         def _refresh_top_bar(self) -> None:
             top_bar = self.top_bar or self.query_one("#top-bar", static)

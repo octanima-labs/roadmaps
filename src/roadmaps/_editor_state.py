@@ -41,7 +41,7 @@ class EditorState:
     dirty: bool = False
 
     def __post_init__(self) -> None:
-        self._ensure_visible_selection(reset=True)
+        self.repair_selection()
 
     @property
     def rows(self) -> list[EditorRow]:
@@ -89,9 +89,10 @@ class EditorState:
         return True
 
     def toggle_hide_completed(self) -> None:
+        previous_rows = self.rows
         self.hide_completed = not self.hide_completed
         self.dirty = True
-        self._ensure_visible_selection(reset=True)
+        self.repair_selection(previous_rows)
 
     def insert_unsorted_task(self, description: str = NEW_TASK_DESCRIPTION) -> Task:
         task = Task(description, order=UNSORTED)
@@ -130,6 +131,7 @@ class EditorState:
         if row is None:
             return False
 
+        previous_rows = self.rows
         before = self.roadmap.to_dict()
         if row.status == NOT_STARTED:
             row.item.mark_ongoing()
@@ -141,16 +143,26 @@ class EditorState:
         changed = self.roadmap.to_dict() != before
         if changed:
             self.dirty = True
-            self._ensure_visible_selection(reset=False)
+            self.repair_selection(previous_rows)
         return changed
 
-    def _ensure_visible_selection(self, *, reset: bool) -> None:
+    def repair_selection(self, previous_rows: list[EditorRow] | None = None) -> None:
         rows = self.rows
         if not rows:
             self.selected_path = None
             return
-        if reset or self.selected_path not in {row.path for row in rows}:
+
+        if self.selected_path in {row.path for row in rows}:
+            return
+
+        previous_index = _row_index(previous_rows or [], self.selected_path)
+        if previous_index is None:
             self.selected_path = rows[0].path
+            return
+        if previous_index < len(rows):
+            self.selected_path = rows[previous_index].path
+            return
+        self.selected_path = rows[-1].path
 
     def _insertion_location(self) -> tuple[list[Task | TaskGroup], int]:
         if self.selected_path is None:
@@ -230,3 +242,12 @@ def _renumber_sorted_siblings(siblings: list[Task | TaskGroup]) -> None:
             continue
         item.order = order
         order += 1
+
+
+def _row_index(rows: list[EditorRow], path: Path | None) -> int | None:
+    if path is None:
+        return None
+    for index, row in enumerate(rows):
+        if row.path == path:
+            return index
+    return None
