@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import argparse
 import sys
-from importlib import import_module
 from pathlib import Path
 from typing import TextIO
 
@@ -252,16 +251,22 @@ def _handle_add_task(args: argparse.Namespace) -> int:
 
 def _handle_editor(args: argparse.Namespace) -> int:
     try:
-        import_module("textual")
+        document = load_document(args.file, args.format, default="text")
+        from roadmaps.editor import run_editor
+
+        return run_editor(document)
     except ModuleNotFoundError:
         print(
             "error: Textual is required for the editor; install roadmaps[editor]",
             file=sys.stderr,
         )
         return 1
-
-    print("error: editor UI is not implemented yet", file=sys.stderr)
-    return 1
+    except OSError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
 
 
 def _load_cli_document(

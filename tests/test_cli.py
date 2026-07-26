@@ -536,10 +536,10 @@ def test_unknown_extension_without_format_fails(tmp_path: Path, capsys) -> None:
 
 def test_editor_requires_textual_dependency(monkeypatch: pytest.MonkeyPatch, capsys) -> None:
     def missing_textual(name: str) -> object:
-        assert name == "textual"
+        assert name in {"textual.app", "textual.widgets", "rich.text"}
         raise ModuleNotFoundError("No module named 'textual'")
 
-    monkeypatch.setattr("roadmaps.cli.import_module", missing_textual)
+    monkeypatch.setattr("roadmaps.editor.import_module", missing_textual)
 
     assert main(["editor"]) == 1
 
@@ -551,22 +551,26 @@ def test_editor_requires_textual_dependency(monkeypatch: pytest.MonkeyPatch, cap
     )
 
 
-def test_editor_accepts_optional_path_and_format_until_ui_exists(
+def test_editor_loads_document_and_launches_ui(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys,
 ) -> None:
-    def existing_textual(name: str) -> object:
-        assert name == "textual"
-        return object()
+    path = tmp_path / "roadmap.data"
+    launched: list[object] = []
 
-    monkeypatch.setattr("roadmaps.cli.import_module", existing_textual)
+    def run_editor(document: object) -> int:
+        launched.append(document)
+        return 0
 
-    assert main(["editor", "--format", "yaml", str(tmp_path / "roadmap.data")]) == 1
+    monkeypatch.setattr("roadmaps.editor.run_editor", run_editor)
+
+    assert main(["editor", "--format", "yaml", str(path)]) == 0
 
     captured = capsys.readouterr()
     assert captured.out == ""
-    assert captured.err == "error: editor UI is not implemented yet\n"
+    assert captured.err == ""
+    assert len(launched) == 1
 
 
 def test_invalid_roadmap_returns_nonzero(tmp_path: Path, capsys) -> None:
