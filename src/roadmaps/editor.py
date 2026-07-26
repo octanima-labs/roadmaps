@@ -64,6 +64,8 @@ def create_editor_app(document: Document) -> Any:
             ("-", "decrease_completion", "Completion -1"),
             ("]", "increase_completion_large", "Completion +10"),
             ("[", "decrease_completion_large", "Completion -10"),
+            ("ctrl+k", "move_row_up", "Move row up"),
+            ("ctrl+j", "move_row_down", "Move row down"),
             ("ctrl+u", "insert_unsorted", "New unsorted"),
             ("ctrl+o", "insert_sorted", "New sorted"),
             ("ctrl+space", "cycle_status", "Cycle status"),
@@ -186,6 +188,32 @@ def create_editor_app(document: Document) -> Any:
 
         def action_decrease_completion_large(self) -> None:
             self._adjust_completion_shortcut(-10.0)
+
+        def action_move_row_up(self) -> None:
+            if self.prompt_kind is not None or self.editing:
+                return
+            self._sync_selection_from_table_cursor()
+            if self.state.selected_row is None:
+                self._set_message("no row selected")
+                return
+            if self.state.move_selected_row_up():
+                self._refresh_table()
+                self._set_message("row moved")
+            else:
+                self._set_message("already at top")
+
+        def action_move_row_down(self) -> None:
+            if self.prompt_kind is not None or self.editing:
+                return
+            self._sync_selection_from_table_cursor()
+            if self.state.selected_row is None:
+                self._set_message("no row selected")
+                return
+            if self.state.move_selected_row_down():
+                self._refresh_table()
+                self._set_message("row moved")
+            else:
+                self._set_message("already at bottom")
 
         def action_insert_unsorted(self) -> None:
             self._cancel_prompt()

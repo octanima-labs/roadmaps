@@ -448,6 +448,34 @@ def test_editor_cycle_status_uses_visual_table_cursor_when_state_is_stale() -> N
     assert app.state.selected_path == (1,)
 
 
+def test_editor_move_row_actions_refresh_selection_and_show_messages() -> None:
+    app = create_editor_app(Document(Roadmap([Task("first"), Task("second")]), "text"))
+    _wire_fake_widgets(app)
+    app._refresh_table()
+    app.action_cursor_down()
+
+    app.action_move_row_up()
+
+    assert [step.description for step in app.document.roadmap.steps] == [
+        "second",
+        "first",
+    ]
+    assert app.state.selected_path == (0,)
+    assert app.table.cursor_row == 0
+    assert app.message_bar.value == "row moved"
+
+    app.action_move_row_up()
+    assert app.message_bar.value == "already at top"
+
+    app.action_move_row_down()
+    assert [step.description for step in app.document.roadmap.steps] == [
+        "first",
+        "second",
+    ]
+    assert app.state.selected_path == (1,)
+    assert app.message_bar.value == "row moved"
+
+
 def test_editor_highlight_event_updates_internal_selection() -> None:
     app = create_editor_app(Document(Roadmap([Task("first"), Task("second")]), "text"))
     _wire_fake_widgets(app)
@@ -533,12 +561,15 @@ def test_textual_pilot_drives_editor_keybindings(tmp_path: Path) -> None:
             assert document.roadmap.steps[1].status == ONGOING
             assert document.roadmap.steps[1].completion == 1.0
 
+            await pilot.press("ctrl+k")
+            assert document.roadmap.steps[0].description == "inserted"
+
             await pilot.press("ctrl+s")
             assert app.state.dirty is False
 
     asyncio.run(run_pilot())
     assert path.read_text().splitlines() == [
-        "- [~] first",
         "- [~1.0%] (2) inserted",
+        "- [~] first",
         "- [x] done",
     ]

@@ -425,3 +425,113 @@ def test_adjust_selected_completion_rejects_groups() -> None:
 
     with pytest.raises(TypeError, match="leaf tasks"):
         state.adjust_selected_completion(1.0)
+
+
+def test_move_selected_row_swaps_visible_siblings_and_renumbers_sorted_only() -> None:
+    state = EditorState(
+        Roadmap(
+            [
+                Task("first", order=1),
+                Task("loose"),
+                Task("second", order=2),
+            ]
+        )
+    )
+    state.select_path((2,))
+
+    assert state.move_selected_row_up() is True
+
+    assert [step.description for step in state.roadmap.steps] == [
+        "first",
+        "second",
+        "loose",
+    ]
+    assert [step.order for step in state.roadmap.steps] == [1, 2, UNSORTED]
+    assert state.selected_path == (1,)
+    assert state.dirty is True
+
+
+def test_move_selected_row_top_level_boundaries_are_noops() -> None:
+    state = EditorState(Roadmap([Task("first"), Task("second")]))
+
+    assert state.move_selected_row_up() is False
+    assert [step.description for step in state.roadmap.steps] == ["first", "second"]
+
+    state.select_path((1,))
+    assert state.move_selected_row_down() is False
+    assert [step.description for step in state.roadmap.steps] == ["first", "second"]
+
+
+def test_move_selected_row_outdents_first_child_before_parent() -> None:
+    child = Task("child", order=1)
+    group = TaskGroup("group", order=1, tasks=[child])
+    state = EditorState(Roadmap([group, Task("after", order=2)]))
+    state.select_path((0, 0))
+
+    assert state.move_selected_row_up() is True
+
+    assert [step.description for step in state.roadmap.steps] == ["child", "group", "after"]
+    assert isinstance(state.roadmap.steps[1], Task)
+    assert not isinstance(state.roadmap.steps[1], TaskGroup)
+    assert [step.order for step in state.roadmap.steps] == [1, 2, 3]
+    assert state.selected_path == (0,)
+
+
+def test_move_selected_row_outdents_last_child_after_parent() -> None:
+    child = Task("child", order=1)
+    group = TaskGroup("group", order=1, tasks=[child])
+    state = EditorState(Roadmap([Task("before", order=1), group]))
+    state.select_path((1, 0))
+
+    assert state.move_selected_row_down() is True
+
+    assert [step.description for step in state.roadmap.steps] == ["before", "group", "child"]
+    assert isinstance(state.roadmap.steps[1], Task)
+    assert not isinstance(state.roadmap.steps[1], TaskGroup)
+    assert [step.order for step in state.roadmap.steps] == [1, 2, 3]
+    assert state.selected_path == (2,)
+
+
+def test_move_selected_row_moves_groups_as_subtrees() -> None:
+    group = TaskGroup("group", tasks=[Task("child")])
+    state = EditorState(Roadmap([Task("first"), group]))
+    state.select_path((1,))
+
+    assert state.move_selected_row_up() is True
+
+    assert state.roadmap.steps == [group, Task("first")]
+    assert group.tasks == [Task("child")]
+    assert state.selected_path == (0,)
+
+
+def test_move_selected_row_allows_completed_rows() -> None:
+    done = Task("done", status=COMPLETED)
+    state = EditorState(Roadmap([Task("first"), done]))
+    state.select_path((1,))
+
+    assert state.move_selected_row_up() is True
+    assert state.roadmap.steps == [done, Task("first")]
+
+
+def test_move_selected_row_respects_visible_rows_when_completed_are_hidden() -> None:
+    state = EditorState(
+        Roadmap(
+            [
+                Task("first"),
+                Task("done", status=COMPLETED),
+                Task("second"),
+            ]
+        ),
+        hide_completed=True,
+    )
+    state.select_path((2,))
+
+    assert state.move_selected_row_up() is True
+
+    assert [step.description for step in state.roadmap.steps] == [
+        "second",
+        "done",
+        "first",
+    ]
+    assert [row.description for row in state.rows] == ["second", "first"]
+    assert state.selected_path == (0,)

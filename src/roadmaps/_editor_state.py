@@ -237,6 +237,74 @@ class EditorState:
         completion = max(0.0, completion)
         return self.update_selected_completion(completion)
 
+    def move_selected_row_up(self) -> bool:
+        row = self.selected_row
+        if row is None:
+            return False
+
+        siblings, index = _siblings_for_path(self.roadmap, row.path)
+        visible_indices = _visible_sibling_indices(siblings, self.hide_completed)
+        visible_position = visible_indices.index(index)
+        if visible_position > 0:
+            swap_index = visible_indices[visible_position - 1]
+            siblings[index], siblings[swap_index] = siblings[swap_index], siblings[index]
+            _renumber_sorted_siblings(siblings)
+            self._finish_row_move(row.item)
+            return True
+
+        if len(row.path) == 1:
+            return False
+
+        parent_path = row.path[:-1]
+        parent_siblings, parent_index = _siblings_for_path(self.roadmap, parent_path)
+        parent = parent_siblings[parent_index]
+        if not isinstance(parent, TaskGroup):  # pragma: no cover - paths are generated from groups.
+            msg = "parent row is not a task group"
+            raise TypeError(msg)
+
+        item = siblings.pop(index)
+        if not siblings:
+            parent_siblings[parent_index] = parent.to_task()
+        parent_siblings.insert(parent_index, item)
+        _renumber_sorted_siblings(siblings)
+        _renumber_sorted_siblings(parent_siblings)
+        self._finish_row_move(item)
+        return True
+
+    def move_selected_row_down(self) -> bool:
+        row = self.selected_row
+        if row is None:
+            return False
+
+        siblings, index = _siblings_for_path(self.roadmap, row.path)
+        visible_indices = _visible_sibling_indices(siblings, self.hide_completed)
+        visible_position = visible_indices.index(index)
+        if visible_position < len(visible_indices) - 1:
+            swap_index = visible_indices[visible_position + 1]
+            siblings[index], siblings[swap_index] = siblings[swap_index], siblings[index]
+            _renumber_sorted_siblings(siblings)
+            self._finish_row_move(row.item)
+            return True
+
+        if len(row.path) == 1:
+            return False
+
+        parent_path = row.path[:-1]
+        parent_siblings, parent_index = _siblings_for_path(self.roadmap, parent_path)
+        parent = parent_siblings[parent_index]
+        if not isinstance(parent, TaskGroup):  # pragma: no cover - paths are generated from groups.
+            msg = "parent row is not a task group"
+            raise TypeError(msg)
+
+        item = siblings.pop(index)
+        if not siblings:
+            parent_siblings[parent_index] = parent.to_task()
+        parent_siblings.insert(parent_index + 1, item)
+        _renumber_sorted_siblings(siblings)
+        _renumber_sorted_siblings(parent_siblings)
+        self._finish_row_move(item)
+        return True
+
     def cycle_selected_status(self) -> bool:
         row = self.selected_row
         if row is None:
@@ -274,6 +342,11 @@ class EditorState:
             self.selected_path = rows[previous_index].path
             return
         self.selected_path = rows[-1].path
+
+    def _finish_row_move(self, item: Task | TaskGroup) -> None:
+        self.selected_path = _path_for_item(self.roadmap.steps, item)
+        self.dirty = True
+        self.repair_selection()
 
     def _editable_selected_row(self) -> EditorRow | None:
         row = self.selected_row
@@ -419,6 +492,33 @@ def _renumber_sorted_siblings(siblings: list[Task | TaskGroup]) -> None:
             continue
         item.order = order
         order += 1
+
+
+def _visible_sibling_indices(
+    siblings: list[Task | TaskGroup],
+    hide_completed: bool,
+) -> list[int]:
+    return [
+        index
+        for index, item in enumerate(siblings)
+        if not (hide_completed and item.status == COMPLETED)
+    ]
+
+
+def _path_for_item(
+    items: list[Task | TaskGroup],
+    target: Task | TaskGroup,
+    prefix: Path = (),
+) -> Path | None:
+    for index, item in enumerate(items):
+        path = (*prefix, index)
+        if item is target:
+            return path
+        if isinstance(item, TaskGroup):
+            child_path = _path_for_item(item.tasks, target, path)
+            if child_path is not None:
+                return child_path
+    return None
 
 
 def _row_index(rows: list[EditorRow], path: Path | None) -> int | None:
