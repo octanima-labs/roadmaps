@@ -12,6 +12,9 @@ from roadmaps.editor import (
     _tree_description,
     _tree_descriptions,
     create_editor_app,
+    parse_exit_save_prompt,
+    parse_save_failure_prompt,
+    parse_save_format_prompt,
 )
 
 
@@ -145,6 +148,24 @@ def test_tree_description_marks_selected_and_collapsed_rows() -> None:
     app.state.toggle_selected_group_collapsed()
 
     assert _tree_descriptions(app.state.rows)[(0,)] == "* ▸ group"
+
+
+def test_save_prompt_parsers_accept_defaults_and_choices() -> None:
+    assert parse_save_format_prompt("") == "yaml"
+    assert parse_save_format_prompt("JSON") == "json"
+    assert parse_exit_save_prompt("") == "save"
+    assert parse_exit_save_prompt("n") == "discard"
+    assert parse_exit_save_prompt("cancel") == "cancel"
+    assert parse_save_failure_prompt("r") == "retry"
+    assert parse_save_failure_prompt("change") == "change"
+    assert parse_save_failure_prompt("D") == "discard"
+
+    with pytest.raises(ValueError, match="format"):
+        parse_save_format_prompt("xml")
+    with pytest.raises(ValueError, match="yes"):
+        parse_exit_save_prompt("maybe")
+    with pytest.raises(ValueError, match="retry"):
+        parse_save_failure_prompt("")
 
 
 def test_editor_actions_move_selection_and_toggle_completed_visibility() -> None:
@@ -659,7 +680,7 @@ def test_editor_highlight_event_updates_internal_selection() -> None:
     assert app.state.selected_path == (1,)
 
 
-def test_editor_save_named_document_and_defer_unnamed_save(tmp_path: Path) -> None:
+def test_editor_save_named_document_and_prompt_unnamed_save(tmp_path: Path) -> None:
     path = tmp_path / "roadmap.roadmap"
     app = create_editor_app(Document(Roadmap([Task("first")]), "text", path=path))
     _wire_fake_widgets(app)
@@ -675,7 +696,169 @@ def test_editor_save_named_document_and_defer_unnamed_save(tmp_path: Path) -> No
     _wire_fake_widgets(unnamed)
     unnamed.action_save()
 
-    assert unnamed.message_bar.value == "save path prompt is not implemented yet"
+    assert unnamed.prompt_kind == "save-path"
+    assert unnamed.message_bar.value == "Save as path:"
+
+
+def test_editor_unnamed_save_unknown_extension_prompts_format_default_yaml(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "roadmap.data"
+    app = create_editor_app(Document(Roadmap([Task("first")]), "text"))
+    _wire_fake_widgets(app)
+
+    app.action_save()
+    app.edit_input.value = str(path)
+    app.on_input_submitted(SimpleNamespace(input=app.edit_input))
+
+    assert app.prompt_kind == "save-format"
+    assert app.message_bar.value == "Format? text/json/yaml/markdown (yaml)"
+
+    app.edit_input.value = ""
+    app.on_input_submitted(SimpleNamespace(input=app.edit_input))
+
+    assert Roadmap.from_yaml(path.read_text()) == Roadmap([Task("first")])
+    assert app.document.path == path
+    assert app.document.format == "yaml"
+    assert app.document.exists is True
+    assert app.state.dirty is False
+    assert app.message_bar.value == "saved"
+
+
+def test_editor_save_prompt_asks_before_overwriting_existing_file(tmp_path: Path) -> None:
+    path = tmp_path / "roadmap.roadmap"
+    path.write_text("- [ ] old")
+    app = create_editor_app(Document(Roadmap([Task("new")]), "text"))
+    _wire_fake_widgets(app)
+
+    app.action_save()
+    app.edit_input.value = str(path)
+    app.on_input_submitted(SimpleNamespace(input=app.edit_input))
+    assert app.prompt_kind == "save-overwrite-confirm"
+
+    app.edit_input.value = ""
+    app.on_input_submitted(SimpleNamespace(input=app.edit_input))
+    assert path.read_text() == "- [ ] old"
+    assert app.message_bar.value == "save cancelled"
+
+    app.action_save()
+    app.edit_input.value = str(path)
+    app.on_input_submitted(SimpleNamespace(input=app.edit_input))
+    app.edit_input.value = "y"
+    app.on_input_submitted(SimpleNamespace(input=app.edit_input))
+
+    assert path.read_text() == "- [ ] new"
+    assert app.message_bar.value == "saved"
+
+
+def test_editor_save_prompt_reports_missing_parent(tmp_path: Path) -> None:
+    path = tmp_path / "missing" / "roadmap.roadmap"
+    app = create_editor_app(Document(Roadmap([Task("first")]), "text"))
+    _wire_fake_widgets(app)
+
+    app.action_save()
+    app.edit_input.value = str(path)
+    app.on_input_submitted(SimpleNamespace(input=app.edit_input))
+
+    assert "save failed" in app.message_bar.value
+    assert app.document.path is None
+
+
+def test_editor_dirty_quit_saves_named_document_by_default(tmp_path: Path) -> None:
+    path = tmp_path / "roadmap.roadmap"
+    app = create_editor_app(Document(Roadmap([Task("first")]), "text", path=path))
+    _wire_fake_widgets(app)
+    app.state.dirty = True
+    exited: list[bool] = []
+    app.exit = lambda: exited.append(True)
+
+    app.action_quit()
+    assert app.prompt_kind == "exit-save-confirm"
+
+    app.edit_input.value = ""
+    app.on_input_submitted(SimpleNamespace(input=app.edit_input))
+
+    assert path.read_text() == "- [ ] first"
+    assert exited == [True]
+    assert app.state.dirty is False
+
+
+def test_editor_dirty_quit_can_discard_or_cancel(tmp_path: Path) -> None:
+    app = create_editor_app(Document(Roadmap([Task("first")]), "text"))
+    _wire_fake_widgets(app)
+    app.state.dirty = True
+    exited: list[bool] = []
+    app.exit = lambda: exited.append(True)
+
+    app.action_quit()
+    app.edit_input.value = "c"
+    app.on_input_submitted(SimpleNamespace(input=app.edit_input))
+    assert exited == []
+    assert app.message_bar.value == "exit cancelled"
+
+    app.action_quit()
+    app.edit_input.value = "n"
+    app.on_input_submitted(SimpleNamespace(input=app.edit_input))
+    assert exited == [True]
+
+
+def test_editor_dirty_unnamed_quit_saves_path_then_exits(tmp_path: Path) -> None:
+    path = tmp_path / "roadmap.roadmap"
+    app = create_editor_app(Document(Roadmap([Task("first")]), "text"))
+    _wire_fake_widgets(app)
+    app.state.dirty = True
+    exited: list[bool] = []
+    app.exit = lambda: exited.append(True)
+
+    app.action_quit()
+    app.edit_input.value = ""
+    app.on_input_submitted(SimpleNamespace(input=app.edit_input))
+    assert app.prompt_kind == "save-path"
+
+    app.edit_input.value = str(path)
+    app.on_input_submitted(SimpleNamespace(input=app.edit_input))
+
+    assert path.read_text() == "- [ ] first"
+    assert exited == [True]
+    assert app.document.path == path
+
+
+def test_editor_exit_save_failure_retry_change_or_discard(tmp_path: Path) -> None:
+    path = tmp_path / "missing" / "roadmap.roadmap"
+    app = create_editor_app(Document(Roadmap([Task("first")]), "text", path=path))
+    _wire_fake_widgets(app)
+    app.state.dirty = True
+    exited: list[bool] = []
+    app.exit = lambda: exited.append(True)
+
+    app.action_quit()
+    app.edit_input.value = ""
+    app.on_input_submitted(SimpleNamespace(input=app.edit_input))
+    assert app.prompt_kind == "save-failure"
+
+    app.edit_input.value = "r"
+    app.on_input_submitted(SimpleNamespace(input=app.edit_input))
+    assert app.prompt_kind == "save-failure"
+
+    app.edit_input.value = "c"
+    app.on_input_submitted(SimpleNamespace(input=app.edit_input))
+    assert app.prompt_kind == "save-path"
+
+    app.edit_input.value = str(tmp_path / "saved.roadmap")
+    app.on_input_submitted(SimpleNamespace(input=app.edit_input))
+    assert exited == [True]
+
+    other = create_editor_app(Document(Roadmap([Task("first")]), "text", path=path))
+    _wire_fake_widgets(other)
+    other.state.dirty = True
+    other_exited: list[bool] = []
+    other.exit = lambda: other_exited.append(True)
+    other.action_quit()
+    other.edit_input.value = ""
+    other.on_input_submitted(SimpleNamespace(input=other.edit_input))
+    other.edit_input.value = "d"
+    other.on_input_submitted(SimpleNamespace(input=other.edit_input))
+    assert other_exited == [True]
 
 
 def test_editor_save_after_edit_updates_document(tmp_path: Path) -> None:

@@ -1,9 +1,15 @@
 from __future__ import annotations
 
 from importlib import import_module
+from pathlib import Path
 from typing import Any
 
-from roadmaps._documents import Document, save_document
+from roadmaps._documents import (
+    NEW_MARKDOWN_HEADING_LEVEL,
+    Document,
+    detect_format,
+    save_document,
+)
 from roadmaps._editor_state import (
     EditorRow,
     EditorState,
@@ -92,6 +98,9 @@ def create_editor_app(document: Document) -> Any:
             self.completion_allow_start = False
             self.completion_allow_completed = False
             self.completion_adjust_delta = 0.0
+            self.save_after_prompt_quit = False
+            self.pending_save_path: Path | None = None
+            self.pending_save_format: str | None = None
 
         def compose(self) -> Any:
             self.top_bar = static(_top_bar_text(self.document, self.state), id="top-bar")
@@ -328,21 +337,28 @@ def create_editor_app(document: Document) -> Any:
         def action_save(self) -> None:
             self._cancel_prompt()
             self._exit_edit_mode(commit=True)
+            if self.editing:
+                return
             if self.document.path is None:
-                self._set_message("save path prompt is not implemented yet")
+                self._start_save_path_prompt(exit_after=False)
                 return
 
-            try:
-                save_document(self.document)
-            except OSError as exc:
-                self._set_message(f"save failed: {exc}")
+            self._save_current_document(exit_after=False)
+
+        def action_quit(self) -> None:
+            if self.prompt_kind is not None:
+                self._cancel_prompt()
                 return
-            except ValueError as exc:
-                self._set_message(f"save failed: {exc}")
+            self._exit_edit_mode(commit=True)
+            if self.editing:
                 return
-            self.state.dirty = False
-            self._refresh_top_bar()
-            self._set_message("saved")
+            if not self.state.dirty:
+                self._quit_app()
+                return
+            self._start_prompt(
+                "exit-save-confirm",
+                "Save changes before exit? (Y/n/c)",
+            )
 
         def on_input_submitted(self, event: Any) -> None:
             if event.input is self.edit_input:
@@ -466,6 +482,34 @@ def create_editor_app(document: Document) -> Any:
                         allow_completed=self.completion_allow_completed,
                     )
                     self._finish_prompt("completion updated" if changed else "completion unchanged")
+                elif self.prompt_kind == "save-path":
+                    self._submit_save_path(edit_input.value)
+                elif self.prompt_kind == "save-format":
+                    self.pending_save_format = parse_save_format_prompt(edit_input.value)
+                    self._confirm_or_save_pending_path()
+                elif self.prompt_kind == "save-overwrite-confirm":
+                    if parse_confirmation_prompt(edit_input.value, default=False):
+                        self._save_to_pending_path()
+                    else:
+                        self._finish_prompt("save cancelled")
+                elif self.prompt_kind == "exit-save-confirm":
+                    choice = parse_exit_save_prompt(edit_input.value)
+                    if choice == "save":
+                        self._finish_prompt("saving")
+                        self._save_for_exit()
+                    elif choice == "discard":
+                        self._quit_app()
+                    else:
+                        self._finish_prompt("exit cancelled")
+                elif self.prompt_kind == "save-failure":
+                    choice = parse_save_failure_prompt(edit_input.value)
+                    if choice == "retry":
+                        self._finish_prompt("retrying save")
+                        self._retry_failed_exit_save()
+                    elif choice == "change":
+                        self._start_save_path_prompt(exit_after=True)
+                    else:
+                        self._quit_app()
             except ValueError as exc:
                 self._set_message(str(exc))
 
@@ -525,7 +569,117 @@ def create_editor_app(document: Document) -> Any:
             )
             self._finish_prompt("completion updated" if changed else "completion unchanged")
 
+        def _start_save_path_prompt(self, *, exit_after: bool) -> None:
+            self.save_after_prompt_quit = exit_after
+            self.pending_save_path = None
+            self.pending_save_format = None
+            self._start_prompt("save-path", "Save as path:")
+
+        def _submit_save_path(self, value: str) -> None:
+            path_text = value.strip()
+            if not path_text:
+                msg = "save path is required"
+                raise ValueError(msg)
+
+            path = Path(path_text).expanduser()
+            self.pending_save_path = path
+            try:
+                self.pending_save_format = detect_format(path, None)
+            except ValueError:
+                self._start_prompt("save-format", "Format? text/json/yaml/markdown (yaml)")
+                return
+            self._confirm_or_save_pending_path()
+
+        def _confirm_or_save_pending_path(self) -> None:
+            path = self.pending_save_path
+            if path is None:
+                msg = "save path is required"
+                raise ValueError(msg)
+            if path.exists():
+                self._start_prompt("save-overwrite-confirm", "Overwrite existing file? (y/N)")
+                return
+            self._save_to_pending_path()
+
+        def _save_current_document(self, *, exit_after: bool) -> None:
+            if self.document.path is None:
+                self._start_save_path_prompt(exit_after=exit_after)
+                return
+            self.pending_save_path = self.document.path
+            self.pending_save_format = self.document.format
+            self._save_to_path(self.document.path, self.document.format, exit_after=exit_after)
+
+        def _save_for_exit(self) -> None:
+            self.save_after_prompt_quit = True
+            self._save_current_document(exit_after=True)
+
+        def _retry_failed_exit_save(self) -> None:
+            path = self.pending_save_path
+            document_format = self.pending_save_format
+            if path is None or document_format is None:
+                self._start_save_path_prompt(exit_after=True)
+                return
+            self._save_to_path(path, document_format, exit_after=True)
+
+        def _save_to_pending_path(self) -> None:
+            path = self.pending_save_path
+            document_format = self.pending_save_format
+            if path is None or document_format is None:
+                msg = "save path and format are required"
+                raise ValueError(msg)
+            self._save_to_path(
+                path,
+                document_format,
+                exit_after=self.save_after_prompt_quit,
+            )
+
+        def _save_to_path(
+            self,
+            path: Path,
+            document_format: str,
+            *,
+            exit_after: bool,
+        ) -> None:
+            old_path = self.document.path
+            old_exists = self.document.exists
+            old_format = self.document.format
+            old_heading_level = self.document.markdown_heading_level
+            self.document.format = document_format
+            self.document.markdown_heading_level = (
+                old_heading_level or NEW_MARKDOWN_HEADING_LEVEL
+                if document_format == "markdown"
+                else None
+            )
+            try:
+                save_document(self.document, path)
+            except (OSError, ValueError) as exc:
+                self.document.path = old_path
+                self.document.exists = old_exists
+                self.document.format = old_format
+                self.document.markdown_heading_level = old_heading_level
+                if exit_after:
+                    self._start_prompt(
+                        "save-failure",
+                        f"Save failed: retry, change path, or discard? (r/c/d) {exc}",
+                    )
+                else:
+                    self._finish_prompt(f"save failed: {exc}")
+                return
+
+            self.state.dirty = False
+            self.save_after_prompt_quit = False
+            self.pending_save_path = None
+            self.pending_save_format = None
+            self._refresh_top_bar()
+            if exit_after:
+                self._quit_app()
+            else:
+                self._finish_prompt("saved")
+
+        def _quit_app(self) -> None:
+            self.exit()
+
         def _finish_prompt(self, message: str) -> None:
+            prompt_kind = self.prompt_kind
             edit_input = self._edit_input()
             edit_input.styles.display = "none"
             edit_input.value = ""
@@ -533,6 +687,8 @@ def create_editor_app(document: Document) -> Any:
             self.completion_allow_start = False
             self.completion_allow_completed = False
             self.completion_adjust_delta = 0.0
+            if prompt_kind != "save-failure":
+                self.save_after_prompt_quit = False
             self._refresh_table()
             self._table().focus()
             self._set_message(message)
@@ -547,6 +703,9 @@ def create_editor_app(document: Document) -> Any:
             self.completion_allow_start = False
             self.completion_allow_completed = False
             self.completion_adjust_delta = 0.0
+            self.save_after_prompt_quit = False
+            self.pending_save_path = None
+            self.pending_save_format = None
             self._table().focus()
             self._set_message("edit cancelled")
 
@@ -706,3 +865,37 @@ def _has_later_sibling(
 ) -> bool:
     siblings = sibling_indexes.get(parent_path, [])
     return bool(siblings and index < siblings[-1])
+
+
+def parse_save_format_prompt(value: str) -> str:
+    text = value.strip().casefold()
+    if not text:
+        return "yaml"
+    if text in {"text", "json", "yaml", "markdown"}:
+        return text
+    msg = "format must be text, json, yaml, or markdown"
+    raise ValueError(msg)
+
+
+def parse_exit_save_prompt(value: str) -> str:
+    text = value.strip().casefold()
+    if not text or text in {"y", "yes"}:
+        return "save"
+    if text in {"n", "no"}:
+        return "discard"
+    if text in {"c", "cancel"}:
+        return "cancel"
+    msg = "answer must be yes, no, or cancel"
+    raise ValueError(msg)
+
+
+def parse_save_failure_prompt(value: str) -> str:
+    text = value.strip().casefold()
+    if text in {"r", "retry"}:
+        return "retry"
+    if text in {"c", "change"}:
+        return "change"
+    if text in {"d", "discard"}:
+        return "discard"
+    msg = "answer must be retry, change path, or discard"
+    raise ValueError(msg)
