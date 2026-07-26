@@ -6,6 +6,15 @@ from importlib import import_module
 from pathlib import Path
 from typing import TextIO
 
+from roadmaps._documents import (
+    FORMATS,
+    Document,
+    Format,
+    load_document,
+    new_document,
+    render_roadmap,
+    save_document,
+)
 from roadmaps.constants import (
     COMPLETED,
     DEFAULT_PRIORITY,
@@ -20,13 +29,6 @@ from roadmaps.model import (
     TaskGroup,
 )
 
-Format = str
-
-TEXT_EXTENSIONS = {".roadmap", ".txt"}
-JSON_EXTENSIONS = {".json"}
-YAML_EXTENSIONS = {".yaml", ".yml"}
-MARKDOWN_EXTENSIONS = {".md", ".markdown"}
-FORMATS = ("text", "json", "yaml", "markdown")
 STATUSES = ("not-started", "ongoing", "completed")
 
 
@@ -139,31 +141,29 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 def _handle_validate(args: argparse.Namespace) -> int:
-    loaded = _load_roadmap(args.file, args.format)
-    if loaded is None:
+    document = _load_cli_document(args.file, args.format)
+    if document is None:
         return 1
 
-    _roadmap, source_format = loaded
-    print(f"valid {source_format} roadmap: {args.file}")
+    print(f"valid {document.format} roadmap: {args.file}")
     return 0
 
 
 def _handle_next(args: argparse.Namespace) -> int:
-    loaded = _load_roadmap(args.file, args.format)
-    if loaded is None:
+    document = _load_cli_document(args.file, args.format)
+    if document is None:
         return 1
 
-    roadmap, source_format = loaded
-    print(_render_roadmap(Roadmap(roadmap.next_step()), source_format))
+    print(render_roadmap(Roadmap(document.roadmap.next_step()), document.format))
     return 0
 
 
 def _handle_stats(args: argparse.Namespace) -> int:
-    loaded = _load_roadmap(args.file, args.format)
-    if loaded is None:
+    document = _load_cli_document(args.file, args.format)
+    if document is None:
         return 1
 
-    roadmap, _source_format = loaded
+    roadmap = document.roadmap
     leaf_tasks = roadmap.leaf_tasks()
     completed = [task for task in leaf_tasks if task.status == COMPLETED]
     incomplete = [task for task in leaf_tasks if task.status != COMPLETED]
@@ -176,22 +176,20 @@ def _handle_stats(args: argparse.Namespace) -> int:
 
 
 def _handle_render(args: argparse.Namespace) -> int:
-    loaded = _load_roadmap(args.file, args.format)
-    if loaded is None:
+    document = _load_cli_document(args.file, args.format)
+    if document is None:
         return 1
 
-    roadmap, _source_format = loaded
-    print(_render_roadmap(roadmap, args.to))
+    print(render_roadmap(document.roadmap, args.to))
     return 0
 
 
 def _handle_show(args: argparse.Namespace) -> int:
-    loaded = _load_roadmap(args.file, args.format)
-    if loaded is None:
+    document = _load_cli_document(args.file, args.format)
+    if document is None:
         return 1
 
-    roadmap, source_format = loaded
-    matches = roadmap.filter_items(
+    matches = document.roadmap.filter_items(
         completed=args.completed,
         uncompleted=args.uncompleted,
         ongoing=args.ongoing,
@@ -203,8 +201,8 @@ def _handle_show(args: argparse.Namespace) -> int:
         print("no matching tasks")
         return 0
 
-    output_format = args.to or source_format
-    print(_render_roadmap(Roadmap(_flat_show_items(matches)), output_format))
+    output_format = args.to or document.format
+    print(render_roadmap(Roadmap(_flat_show_items(matches)), output_format))
     return 0
 
 
@@ -214,8 +212,14 @@ def _handle_init(args: argparse.Namespace) -> int:
         return 1
 
     try:
-        output_format = _detect_format(args.file, args.format, default="text")
-        args.file.write_text(_render_initial_roadmap(output_format, example=args.example))
+        roadmap = _example_roadmap() if args.example else Roadmap()
+        document = new_document(
+            args.file,
+            format_override=args.format,
+            default="text",
+            roadmap=roadmap,
+        )
+        save_document(document)
     except OSError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
@@ -223,19 +227,18 @@ def _handle_init(args: argparse.Namespace) -> int:
         print(f"error: {exc}", file=sys.stderr)
         return 1
 
-    print(f"created {output_format} roadmap: {args.file}")
+    print(f"created {document.format} roadmap: {args.file}")
     return 0
 
 
 def _handle_add_task(args: argparse.Namespace) -> int:
-    loaded = _load_roadmap(args.file, args.format)
-    if loaded is None:
+    document = _load_cli_document(args.file, args.format)
+    if document is None:
         return 1
 
-    roadmap, source_format = loaded
     try:
-        _add_task_from_args(roadmap, args)
-        args.file.write_text(_render_roadmap(roadmap, source_format))
+        _add_task_from_args(document.roadmap, args)
+        save_document(document)
     except OSError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
@@ -243,7 +246,7 @@ def _handle_add_task(args: argparse.Namespace) -> int:
         print(f"error: {exc}", file=sys.stderr)
         return 1
 
-    print(f"added task to {source_format} roadmap: {args.file}")
+    print(f"added task to {document.format} roadmap: {args.file}")
     return 0
 
 
@@ -261,83 +264,20 @@ def _handle_editor(args: argparse.Namespace) -> int:
     return 1
 
 
-def _load_roadmap(
+def _load_cli_document(
     path: Path,
     format_override: Format | None,
     stderr: TextIO | None = None,
-) -> tuple[Roadmap, Format] | None:
+) -> Document | None:
     stderr = sys.stderr if stderr is None else stderr
     try:
-        source_format = _detect_format(path, format_override)
-        source = path.read_text()
-        return _parse_roadmap(source, source_format), source_format
+        return load_document(path, format_override)
     except OSError as exc:
         print(f"error: {exc}", file=stderr)
         return None
     except ValueError as exc:
         print(f"error: {exc}", file=stderr)
         return None
-
-
-def _detect_format(
-    path: Path,
-    format_override: Format | None,
-    default: Format | None = None,
-) -> Format:
-    if format_override is not None:
-        return format_override
-
-    suffix = path.suffix.lower()
-    if suffix in TEXT_EXTENSIONS:
-        return "text"
-    if suffix in JSON_EXTENSIONS:
-        return "json"
-    if suffix in YAML_EXTENSIONS:
-        return "yaml"
-    if suffix in MARKDOWN_EXTENSIONS:
-        return "markdown"
-    if default is not None:
-        return default
-
-    msg = f"cannot infer format from extension '{suffix or '<none>'}'; use --format"
-    raise ValueError(msg)
-
-
-def _parse_roadmap(source: str, source_format: Format) -> Roadmap:
-    if source_format == "text":
-        return Roadmap.from_text(source)
-    if source_format == "json":
-        return Roadmap.from_json(source)
-    if source_format == "yaml":
-        return Roadmap.from_yaml(source)
-    if source_format == "markdown":
-        return Roadmap.from_markdown(source)
-
-    msg = f"unsupported format: {source_format}"
-    raise ValueError(msg)
-
-
-def _render_roadmap(roadmap: Roadmap, output_format: Format) -> str:
-    if output_format == "text":
-        return roadmap.to_text()
-    if output_format == "json":
-        return roadmap.to_json()
-    if output_format == "yaml":
-        return roadmap.to_yaml()
-    if output_format == "markdown":
-        return roadmap.to_markdown()
-
-    msg = f"unsupported format: {output_format}"
-    raise ValueError(msg)
-
-
-def _render_initial_roadmap(output_format: Format, *, example: bool = False) -> str:
-    roadmap = _example_roadmap() if example else Roadmap()
-    if output_format == "markdown":
-        body = roadmap.to_markdown()
-        return "# Roadmap\n\n" if not body else f"# Roadmap\n\n{body}"
-    return _render_roadmap(roadmap, output_format)
-
 
 def _flat_show_items(items: list[Task | TaskGroup]) -> list[Task]:
     return [_show_item_snapshot(item) for item in items]

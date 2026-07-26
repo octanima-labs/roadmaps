@@ -195,7 +195,7 @@ def test_init_creates_text_json_yaml_and_markdown_files(tmp_path: Path, capsys) 
     assert text_path.read_text() == ""
     assert Roadmap.from_json(json_path.read_text()) == Roadmap()
     assert Roadmap.from_yaml(yaml_path.read_text()) == Roadmap()
-    assert markdown_path.read_text() == "# Roadmap\n\n"
+    assert markdown_path.read_text() == "## Roadmap\n\n"
     assert "created text roadmap" in capsys.readouterr().out
 
 
@@ -367,7 +367,7 @@ def test_add_task_preserves_markdown_format(tmp_path: Path) -> None:
 
     assert main(["add-task", str(path), "-d", "docs: publish **examples**"]) == 0
 
-    assert path.read_text() == "- [ ] docs: publish **examples**"
+    assert path.read_text() == "# Roadmap\n\n- [ ] docs: publish **examples**"
 
 
 def test_add_task_requires_description_option(tmp_path: Path) -> None:
