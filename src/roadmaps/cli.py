@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+from importlib import import_module
 from pathlib import Path
 from typing import TextIO
 
@@ -126,6 +127,14 @@ def _build_parser() -> argparse.ArgumentParser:
     add_task_parser.add_argument("--completion", type=float, default=0.0)
     add_task_parser.set_defaults(handler=_handle_add_task)
 
+    editor_parser = subparsers.add_parser(
+        "editor",
+        parents=[format_parent],
+        help="Launch the optional roadmap editor.",
+    )
+    editor_parser.add_argument("file", nargs="?", type=Path)
+    editor_parser.set_defaults(handler=_handle_editor)
+
     return parser
 
 
@@ -236,6 +245,20 @@ def _handle_add_task(args: argparse.Namespace) -> int:
 
     print(f"added task to {source_format} roadmap: {args.file}")
     return 0
+
+
+def _handle_editor(args: argparse.Namespace) -> int:
+    try:
+        import_module("textual")
+    except ModuleNotFoundError:
+        print(
+            "error: Textual is required for the editor; install roadmaps[editor]",
+            file=sys.stderr,
+        )
+        return 1
+
+    print("error: editor UI is not implemented yet", file=sys.stderr)
+    return 1
 
 
 def _load_roadmap(

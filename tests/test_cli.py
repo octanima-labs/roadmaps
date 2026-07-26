@@ -534,6 +534,41 @@ def test_unknown_extension_without_format_fails(tmp_path: Path, capsys) -> None:
     assert "cannot infer format" in captured.err
 
 
+def test_editor_requires_textual_dependency(monkeypatch: pytest.MonkeyPatch, capsys) -> None:
+    def missing_textual(name: str) -> object:
+        assert name == "textual"
+        raise ModuleNotFoundError("No module named 'textual'")
+
+    monkeypatch.setattr("roadmaps.cli.import_module", missing_textual)
+
+    assert main(["editor"]) == 1
+
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert (
+        captured.err
+        == "error: Textual is required for the editor; install roadmaps[editor]\n"
+    )
+
+
+def test_editor_accepts_optional_path_and_format_until_ui_exists(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys,
+) -> None:
+    def existing_textual(name: str) -> object:
+        assert name == "textual"
+        return object()
+
+    monkeypatch.setattr("roadmaps.cli.import_module", existing_textual)
+
+    assert main(["editor", "--format", "yaml", str(tmp_path / "roadmap.data")]) == 1
+
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err == "error: editor UI is not implemented yet\n"
+
+
 def test_invalid_roadmap_returns_nonzero(tmp_path: Path, capsys) -> None:
     path = tmp_path / "roadmap.roadmap"
     path.write_text(" - [ ] invalid indentation")

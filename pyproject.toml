@@ -50,6 +50,7 @@ dev = [
   "pytest",
   "PyYAML",
   "ruff",
+  "textual",
 ]
 docs = [
   "myst-parser",
@@ -75,6 +76,7 @@ dependencies = [
   "pytest",
   "PyYAML",
   "ruff",
+  "textual",
 ]
 
 [tool.hatch.envs.docs]

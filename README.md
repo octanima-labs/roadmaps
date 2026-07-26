@@ -20,6 +20,12 @@ YAML support is optional and uses PyYAML:
 python -m pip install "/path/to/roadmaps/public[yaml]"
 ```
 
+The future interactive editor is optional and uses Textual:
+
+```bash
+python -m pip install "/path/to/roadmaps/public[editor]"
+```
+
 Or install it editable while developing:
 
 ```bash
@@ -233,7 +239,7 @@ roadmaps add-task roadmap.roadmap --parent 1.2 -d "nested child"
 
 `add-task` supports `--order`, `--priority`, `--urgent`, `--optional`, `--milestone`, `--status not-started|ongoing|completed`, and `--completion`. With `--parent`, the parent path counts all siblings at each level, leaf parents are converted to groups, child order is assigned automatically, and omitted milestones inherit from the parent. Ongoing and completed tasks created through `add-task` receive JSON-persisted date fields automatically.
 
-Interactive editing is planned for a future `roadmaps editor` command. Editor dependencies will be optional and installable with `roadmaps[editor]`.
+`roadmaps editor [PATH] [--format text|json|yaml|markdown]` is wired as a dependency-checked stub. Without Textual it returns `error: Textual is required for the editor; install roadmaps[editor]`; with Textual installed it returns `error: editor UI is not implemented yet` until the real UI lands.
 
 ## Development
 
