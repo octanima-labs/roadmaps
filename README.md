@@ -239,7 +239,7 @@ roadmaps add-task roadmap.roadmap --parent 1.2 -d "nested child"
 
 `add-task` supports `--order`, `--priority`, `--urgent`, `--optional`, `--milestone`, `--status not-started|ongoing|completed`, and `--completion`. With `--parent`, the parent path counts all siblings at each level, leaf parents are converted to groups, child order is assigned automatically, and omitted milestones inherit from the parent. Ongoing and completed tasks created through `add-task` receive JSON-persisted date fields automatically. Markdown saves preserve an existing `Roadmap` section heading level.
 
-`roadmaps editor [PATH] [--format text|json|yaml|markdown]` launches a display-only Textual grid when `roadmaps[editor]` is installed. It shows a path/format/dirty top bar and order, completion, priority, milestone, and tree-prefixed description columns. Editing keybindings are still in progress; without Textual it returns `error: Textual is required for the editor; install roadmaps[editor]`.
+`roadmaps editor [PATH] [--format text|json|yaml|markdown]` launches an MVP Textual editor when `roadmaps[editor]` is installed. It shows a path/format/dirty top bar and order, completion, priority, milestone, and tree-prefixed description columns. MVP keybindings include up/down navigation, Enter description edit, Escape cancel edit, `ctrl+u`, `ctrl+o`, `ctrl+space`, `ctrl+h`, and `ctrl+s`; unnamed saves show a deferred save-path message. Without Textual it returns `error: Textual is required for the editor; install roadmaps[editor]`.
 
 ## Development
 
