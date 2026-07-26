@@ -418,7 +418,7 @@ def test_textual_pilot_drives_editor_keybindings(tmp_path: Path) -> None:
             assert app.editing is False
             assert document.roadmap.steps[1].description == "inserted"
 
-            await pilot.press("ctrl+m")
+            await pilot.press("m")
             app.edit_input.value = "2"
             await pilot.press("enter")
             assert document.roadmap.steps[1].milestone == 2
