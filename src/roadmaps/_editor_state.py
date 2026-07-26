@@ -185,6 +185,58 @@ class EditorState:
         self.repair_selection()
         return True
 
+    def adjust_selected_completion(
+        self,
+        delta: float,
+        *,
+        allow_start: bool = False,
+        allow_completed: bool = False,
+        allow_complete: bool = False,
+    ) -> bool:
+        row = self.selected_row
+        if row is None:
+            return False
+        if isinstance(row.item, TaskGroup):
+            msg = "completion editing is only available for leaf tasks"
+            raise TypeError(msg)
+        if delta == 0.0:
+            return False
+
+        if row.status == NOT_STARTED:
+            if delta < 0:
+                msg = "task is not started"
+                raise ValueError(msg)
+            if not allow_start:
+                msg = "not-started tasks must be started before setting completion"
+                raise ValueError(msg)
+            return self.update_selected_completion(delta, allow_start=True)
+
+        if row.status == COMPLETED:
+            if delta > 0:
+                msg = "task is already completed"
+                raise ValueError(msg)
+            if not allow_completed:
+                msg = "completed rows are read-only except status cycling"
+                raise ValueError(msg)
+            completion = max(0.0, 100.0 + delta)
+            return self.update_selected_completion(completion, allow_completed=True)
+
+        completion = row.item.completion + delta
+        if completion >= 100.0:
+            if not allow_complete:
+                msg = "completion would complete task"
+                raise ValueError(msg)
+            before = self.roadmap.to_dict()
+            row.item.mark_completed()
+            if self.roadmap.to_dict() == before:
+                return False
+            self.dirty = True
+            self.repair_selection()
+            return True
+
+        completion = max(0.0, completion)
+        return self.update_selected_completion(completion)
+
     def cycle_selected_status(self) -> bool:
         row = self.selected_row
         if row is None:

@@ -265,6 +265,111 @@ def test_editor_completion_prompt_can_remove_completed_mark() -> None:
     assert app.message_bar.value == "completion updated"
 
 
+def test_editor_completion_shortcuts_adjust_ongoing_task() -> None:
+    task = Task("task", status=ONGOING, completion=50.0)
+    app = create_editor_app(Document(Roadmap([task]), "text"))
+    _wire_fake_widgets(app)
+    app._refresh_table()
+
+    app.action_increase_completion()
+    assert task.completion == 51.0
+    assert app.message_bar.value == "completion updated"
+
+    app.action_decrease_completion_large()
+    assert task.completion == 41.0
+
+    app.action_decrease_completion_large()
+    app.action_decrease_completion_large()
+    app.action_decrease_completion_large()
+    app.action_decrease_completion_large()
+    app.action_decrease_completion_large()
+    assert task.status == ONGOING
+    assert task.completion == 0.0
+
+
+def test_editor_increment_shortcut_starts_pending_task_by_default() -> None:
+    task = Task("task")
+    app = create_editor_app(Document(Roadmap([task]), "text"))
+    _wire_fake_widgets(app)
+    app._refresh_table()
+
+    app.action_increase_completion_large()
+    assert app.prompt_kind == "completion-adjust-start-confirm"
+    assert app.message_bar.value == "Start task? (Y/n)"
+
+    app.edit_input.value = ""
+    app.on_input_submitted(SimpleNamespace(input=app.edit_input))
+
+    assert task.status == ONGOING
+    assert task.completion == 10.0
+    assert app.message_bar.value == "completion updated"
+
+
+def test_editor_completion_shortcut_can_complete_ongoing_task_by_default() -> None:
+    task = Task("task", status=ONGOING, completion=99.0)
+    app = create_editor_app(Document(Roadmap([task]), "text"))
+    _wire_fake_widgets(app)
+    app._refresh_table()
+
+    app.action_increase_completion()
+    assert app.prompt_kind == "completion-adjust-complete-confirm"
+    assert app.message_bar.value == "Complete task? (Y/n)"
+
+    app.edit_input.value = ""
+    app.on_input_submitted(SimpleNamespace(input=app.edit_input))
+
+    assert task.status == COMPLETED
+    assert task.completion == 100.0
+    assert app.message_bar.value == "completion updated"
+
+
+def test_editor_completed_decrement_shortcut_defaults_to_cancel() -> None:
+    task = Task("done", status=COMPLETED)
+    app = create_editor_app(Document(Roadmap([task]), "text"))
+    _wire_fake_widgets(app)
+    app._refresh_table()
+
+    app.action_decrease_completion()
+    assert app.prompt_kind == "completion-adjust-remove-confirm"
+    assert app.message_bar.value == "REMOVE COMPLETION MARK? (y/N)"
+
+    app.edit_input.value = ""
+    app.on_input_submitted(SimpleNamespace(input=app.edit_input))
+
+    assert task.status == COMPLETED
+    assert app.message_bar.value == "completion edit cancelled"
+
+
+def test_editor_completed_decrement_shortcut_applies_delta_after_confirmation() -> None:
+    task = Task("done", status=COMPLETED)
+    app = create_editor_app(Document(Roadmap([task]), "text"))
+    _wire_fake_widgets(app)
+    app._refresh_table()
+
+    app.action_decrease_completion_large()
+    app.edit_input.value = "y"
+    app.on_input_submitted(SimpleNamespace(input=app.edit_input))
+
+    assert task.status == ONGOING
+    assert task.completion == 90.0
+    assert app.message_bar.value == "completion updated"
+
+
+def test_editor_completion_shortcut_noop_messages() -> None:
+    app = create_editor_app(
+        Document(Roadmap([Task("pending"), TaskGroup("group", tasks=[Task("child")])]), "text")
+    )
+    _wire_fake_widgets(app)
+    app._refresh_table()
+
+    app.action_decrease_completion()
+    assert app.message_bar.value == "task is not started"
+
+    app.action_cursor_down()
+    app.action_decrease_completion()
+    assert app.message_bar.value == "completion editing is only available for leaf tasks"
+
+
 def test_editor_metadata_prompts_reject_completed_rows_and_groups() -> None:
     app = create_editor_app(
         Document(
@@ -423,12 +528,17 @@ def test_textual_pilot_drives_editor_keybindings(tmp_path: Path) -> None:
             await pilot.press("enter")
             assert document.roadmap.steps[1].milestone == 2
 
+            await pilot.press("+")
+            await pilot.press("enter")
+            assert document.roadmap.steps[1].status == ONGOING
+            assert document.roadmap.steps[1].completion == 1.0
+
             await pilot.press("ctrl+s")
             assert app.state.dirty is False
 
     asyncio.run(run_pilot())
     assert path.read_text().splitlines() == [
         "- [~] first",
-        "- [ ] (2) inserted",
+        "- [~1.0%] (2) inserted",
         "- [x] done",
     ]

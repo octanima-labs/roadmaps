@@ -367,3 +367,61 @@ def test_update_selected_completion_requires_leaf_and_confirmation_flags() -> No
     assert state.update_selected_completion(0.0, allow_completed=True) is True
     assert done.status == ONGOING
     assert done.completion == 0.0
+
+
+def test_adjust_selected_completion_updates_ongoing_leaf_and_clamps_to_zero() -> None:
+    task = Task("task", status=ONGOING, completion=50.0)
+    state = EditorState(Roadmap([task]))
+
+    assert state.adjust_selected_completion(1.0) is True
+    assert task.completion == 51.0
+    assert state.adjust_selected_completion(-99.0) is True
+    assert task.status == ONGOING
+    assert task.completion == 0.0
+
+
+def test_adjust_selected_completion_handles_not_started_rules() -> None:
+    task = Task("task")
+    state = EditorState(Roadmap([task]))
+
+    with pytest.raises(ValueError, match="started"):
+        state.adjust_selected_completion(1.0)
+    with pytest.raises(ValueError, match="not started"):
+        state.adjust_selected_completion(-1.0)
+
+    assert state.adjust_selected_completion(10.0, allow_start=True) is True
+    assert task.status == ONGOING
+    assert task.completion == 10.0
+
+
+def test_adjust_selected_completion_can_complete_ongoing_leaf() -> None:
+    task = Task("task", status=ONGOING, completion=95.0)
+    state = EditorState(Roadmap([task]))
+
+    with pytest.raises(ValueError, match="complete task"):
+        state.adjust_selected_completion(10.0)
+
+    assert state.adjust_selected_completion(10.0, allow_complete=True) is True
+    assert task.status == COMPLETED
+    assert task.completion == 100.0
+
+
+def test_adjust_selected_completion_handles_completed_rules() -> None:
+    task = Task("done", status=COMPLETED)
+    state = EditorState(Roadmap([task]))
+
+    with pytest.raises(ValueError, match="already completed"):
+        state.adjust_selected_completion(1.0)
+    with pytest.raises(ValueError, match="completed rows"):
+        state.adjust_selected_completion(-1.0)
+
+    assert state.adjust_selected_completion(-10.0, allow_completed=True) is True
+    assert task.status == ONGOING
+    assert task.completion == 90.0
+
+
+def test_adjust_selected_completion_rejects_groups() -> None:
+    state = EditorState(Roadmap([TaskGroup("group", tasks=[Task("child")])]))
+
+    with pytest.raises(TypeError, match="leaf tasks"):
+        state.adjust_selected_completion(1.0)

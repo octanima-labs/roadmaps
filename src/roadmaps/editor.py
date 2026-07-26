@@ -60,6 +60,10 @@ def create_editor_app(document: Document) -> Any:
             ("m", "edit_milestone", "Milestone"),
             ("p", "edit_priority", "Priority"),
             ("e", "edit_completion", "Completion"),
+            ("+", "increase_completion", "Completion +1"),
+            ("-", "decrease_completion", "Completion -1"),
+            ("]", "increase_completion_large", "Completion +10"),
+            ("[", "decrease_completion_large", "Completion -10"),
             ("ctrl+u", "insert_unsorted", "New unsorted"),
             ("ctrl+o", "insert_sorted", "New sorted"),
             ("ctrl+space", "cycle_status", "Cycle status"),
@@ -80,6 +84,7 @@ def create_editor_app(document: Document) -> Any:
             self.prompt_kind: str | None = None
             self.completion_allow_start = False
             self.completion_allow_completed = False
+            self.completion_adjust_delta = 0.0
 
         def compose(self) -> Any:
             self.top_bar = static(_top_bar_text(self.document, self.state), id="top-bar")
@@ -169,6 +174,18 @@ def create_editor_app(document: Document) -> Any:
                 )
                 return
             self._start_completion_prompt()
+
+        def action_increase_completion(self) -> None:
+            self._adjust_completion_shortcut(1.0)
+
+        def action_decrease_completion(self) -> None:
+            self._adjust_completion_shortcut(-1.0)
+
+        def action_increase_completion_large(self) -> None:
+            self._adjust_completion_shortcut(10.0)
+
+        def action_decrease_completion_large(self) -> None:
+            self._adjust_completion_shortcut(-10.0)
 
         def action_insert_unsorted(self) -> None:
             self._cancel_prompt()
@@ -307,6 +324,21 @@ def create_editor_app(document: Document) -> Any:
                         self._start_completion_prompt(allow_completed=True)
                     else:
                         self._finish_prompt("completion edit cancelled")
+                elif self.prompt_kind == "completion-adjust-start-confirm":
+                    if parse_confirmation_prompt(edit_input.value, default=True):
+                        self._apply_completion_adjustment(allow_start=True)
+                    else:
+                        self._finish_prompt("completion edit cancelled")
+                elif self.prompt_kind == "completion-adjust-remove-confirm":
+                    if parse_confirmation_prompt(edit_input.value, default=False):
+                        self._apply_completion_adjustment(allow_completed=True)
+                    else:
+                        self._finish_prompt("completion edit cancelled")
+                elif self.prompt_kind == "completion-adjust-complete-confirm":
+                    if parse_confirmation_prompt(edit_input.value, default=True):
+                        self._apply_completion_adjustment(allow_complete=True)
+                    else:
+                        self._finish_prompt("completion edit cancelled")
                 elif self.prompt_kind == "completion":
                     completion = parse_completion_prompt(edit_input.value)
                     changed = self.state.update_selected_completion(
@@ -318,6 +350,62 @@ def create_editor_app(document: Document) -> Any:
             except ValueError as exc:
                 self._set_message(str(exc))
 
+        def _adjust_completion_shortcut(self, delta: float) -> None:
+            if self.prompt_kind is not None or self.editing:
+                return
+            self._sync_selection_from_table_cursor()
+            row = self.state.selected_row
+            if row is None:
+                self._set_message("no row selected")
+                return
+            if row.group:
+                self._set_message("completion editing is only available for leaf tasks")
+                return
+            if row.status == NOT_STARTED:
+                if delta < 0:
+                    self._set_message("task is not started")
+                    return
+                self.completion_adjust_delta = delta
+                self._start_prompt("completion-adjust-start-confirm", "Start task? (Y/n)")
+                return
+            if row.status == COMPLETED:
+                if delta > 0:
+                    self._set_message("task is already completed")
+                    return
+                self.completion_adjust_delta = delta
+                self._start_prompt(
+                    "completion-adjust-remove-confirm",
+                    "REMOVE COMPLETION MARK? (y/N)",
+                )
+                return
+            if row.item.completion + delta >= 100.0:
+                self.completion_adjust_delta = delta
+                self._start_prompt("completion-adjust-complete-confirm", "Complete task? (Y/n)")
+                return
+
+            try:
+                changed = self.state.adjust_selected_completion(delta)
+            except (TypeError, ValueError) as exc:
+                self._set_message(str(exc))
+                return
+            self._refresh_table()
+            self._set_message("completion updated" if changed else "completion unchanged")
+
+        def _apply_completion_adjustment(
+            self,
+            *,
+            allow_start: bool = False,
+            allow_completed: bool = False,
+            allow_complete: bool = False,
+        ) -> None:
+            changed = self.state.adjust_selected_completion(
+                self.completion_adjust_delta,
+                allow_start=allow_start,
+                allow_completed=allow_completed,
+                allow_complete=allow_complete,
+            )
+            self._finish_prompt("completion updated" if changed else "completion unchanged")
+
         def _finish_prompt(self, message: str) -> None:
             edit_input = self._edit_input()
             edit_input.styles.display = "none"
@@ -325,6 +413,7 @@ def create_editor_app(document: Document) -> Any:
             self.prompt_kind = None
             self.completion_allow_start = False
             self.completion_allow_completed = False
+            self.completion_adjust_delta = 0.0
             self._refresh_table()
             self._table().focus()
             self._set_message(message)
@@ -338,6 +427,7 @@ def create_editor_app(document: Document) -> Any:
             self.prompt_kind = None
             self.completion_allow_start = False
             self.completion_allow_completed = False
+            self.completion_adjust_delta = 0.0
             self._table().focus()
             self._set_message("edit cancelled")
 
