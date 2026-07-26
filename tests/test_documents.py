@@ -109,10 +109,59 @@ ignored
     assert render_document(document) == "## Roadmap\n\n- [ ] task"
 
 
+def test_markdown_document_uses_highest_level_roadmap_heading(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "roadmap.md"
+    path.write_text(
+        """
+## Roadmap
+
+- [ ] nested heading
+
+# Roadmap
+
+- [ ] top heading
+""".strip()
+    )
+
+    document = load_document(path)
+
+    assert document.roadmap == Roadmap([Task("top heading")])
+    assert document.markdown_heading_level == 1
+    assert render_document(document) == "# Roadmap\n\n- [ ] top heading"
+
+
+def test_markdown_document_without_wrapper_renders_bare_markdown(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "roadmap.md"
+    path.write_text("- [ ] task")
+
+    document = load_document(path)
+
+    assert document.markdown_heading_level is None
+    assert render_document(document) == "- [ ] task"
+
+
 def test_new_markdown_document_uses_heading_two_wrapper() -> None:
     document = new_document(Path("roadmap.md"), roadmap=Roadmap([Task("task")]))
 
     assert render_document(document) == "## Roadmap\n\n- [ ] task"
+
+
+def test_save_document_to_new_path_updates_document_metadata(tmp_path: Path) -> None:
+    path = tmp_path / "saved.md"
+    document = new_document(
+        Path("draft.md"),
+        roadmap=Roadmap([Task("task")]),
+    )
+
+    save_document(document, path)
+
+    assert path.read_text() == "## Roadmap\n\n- [ ] task"
+    assert document.path == path
+    assert document.exists is True
 
 
 def test_bare_markdown_rendering_stays_available_for_format_conversion() -> None:

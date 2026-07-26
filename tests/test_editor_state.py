@@ -46,6 +46,18 @@ def test_move_selection_clamps_without_marking_dirty() -> None:
     assert state.dirty is False
 
 
+def test_select_path_rejects_non_visible_paths() -> None:
+    state = EditorState(
+        Roadmap([Task("first"), Task("done", status=COMPLETED)]),
+        hide_completed=True,
+    )
+
+    assert state.select_path((1,)) is False
+    assert state.selected_path == (0,)
+    assert state.select_path((9,)) is False
+    assert state.selected_path == (0,)
+
+
 def test_hide_completed_preserves_visible_selection_and_marks_dirty() -> None:
     state = EditorState(
         Roadmap(
@@ -193,6 +205,13 @@ def test_update_selected_description_marks_dirty_only_on_change() -> None:
     assert state.dirty is True
 
 
+def test_update_selected_description_without_selection_is_noop() -> None:
+    state = EditorState(Roadmap())
+
+    assert state.update_selected_description("new") is False
+    assert state.dirty is False
+
+
 def test_cycle_leaf_statuses_and_marks_dirty_only_on_change() -> None:
     task = Task("task")
     state = EditorState(Roadmap([task]))
@@ -235,6 +254,13 @@ def test_cycle_group_status_uses_group_methods() -> None:
 
 def test_cycle_empty_group_is_noop() -> None:
     state = EditorState(Roadmap([TaskGroup("empty")]))
+
+    assert state.cycle_selected_status() is False
+    assert state.dirty is False
+
+
+def test_cycle_status_without_selection_is_noop() -> None:
+    state = EditorState(Roadmap())
 
     assert state.cycle_selected_status() is False
     assert state.dirty is False

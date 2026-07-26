@@ -1,6 +1,9 @@
+import asyncio
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
+
+import pytest
 
 from roadmaps import COMPLETED, NOT_STARTED, Roadmap, Task, TaskGroup
 from roadmaps._documents import Document, load_document
@@ -242,3 +245,45 @@ def test_editor_save_after_edit_updates_document(tmp_path: Path) -> None:
 
     assert path.read_text() == "- [ ] new"
     assert app.editing is False
+
+
+def test_textual_pilot_drives_editor_keybindings(tmp_path: Path) -> None:
+    pytest.importorskip("textual")
+    path = tmp_path / "roadmap.roadmap"
+    document = Document(
+        Roadmap([Task("first"), Task("done", status=COMPLETED)]),
+        "text",
+        path=path,
+    )
+    app = create_editor_app(document)
+
+    async def run_pilot() -> None:
+        async with app.run_test() as pilot:
+            await pilot.press("down")
+            assert app.state.selected_path == (1,)
+
+            await pilot.press("ctrl+h")
+            assert app.state.hide_completed is True
+            assert app.state.selected_path == (0,)
+
+            await pilot.press("ctrl+space")
+            assert document.roadmap.steps[0].status != NOT_STARTED
+
+            await pilot.press("ctrl+u")
+            assert app.editing is True
+            assert app.state.selected_path == (1,)
+
+            app.edit_input.value = "inserted"
+            await pilot.press("enter")
+            assert app.editing is False
+            assert document.roadmap.steps[1].description == "inserted"
+
+            await pilot.press("ctrl+s")
+            assert app.state.dirty is False
+
+    asyncio.run(run_pilot())
+    assert path.read_text().splitlines() == [
+        "- [~] first",
+        "- [ ] inserted",
+        "- [x] done",
+    ]

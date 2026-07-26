@@ -3,6 +3,7 @@ from pathlib import Path
 import pytest
 
 from roadmaps import COMPLETED, ONGOING, Roadmap, Task
+from roadmaps._documents import Document
 from roadmaps.cli import main
 
 
@@ -571,6 +572,30 @@ def test_editor_loads_document_and_launches_ui(
     assert captured.out == ""
     assert captured.err == ""
     assert len(launched) == 1
+
+
+def test_editor_without_path_launches_unnamed_text_document(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys,
+) -> None:
+    launched: list[Document] = []
+
+    def run_editor(document: Document) -> int:
+        launched.append(document)
+        return 0
+
+    monkeypatch.setattr("roadmaps.editor.run_editor", run_editor)
+
+    assert main(["editor"]) == 0
+
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err == ""
+    assert len(launched) == 1
+    document = launched[0]
+    assert document.path is None
+    assert document.format == "text"
+    assert document.exists is False
 
 
 def test_invalid_roadmap_returns_nonzero(tmp_path: Path, capsys) -> None:
