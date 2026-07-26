@@ -20,6 +20,7 @@ class FakeTable:
         self.columns: list[str] = []
         self.rows: list[tuple[object, ...]] = []
         self.cursor_row = 0
+        self.hover_row: int | None = None
         self.focused = False
 
     def clear(self, *, columns: bool = False) -> None:
@@ -134,6 +135,16 @@ def test_tree_description_ignores_hidden_completed_rows() -> None:
     app.state.hide_completed = True
 
     assert _tree_descriptions(app.state.rows)[(0, 0)] == "└─ visible"
+
+
+def test_tree_description_marks_selected_and_collapsed_rows() -> None:
+    app = create_editor_app(
+        Document(Roadmap([TaskGroup("group", tasks=[Task("child")])]), "text")
+    )
+    app.state.selected_paths = {(0,)}
+    app.state.toggle_selected_group_collapsed()
+
+    assert _tree_descriptions(app.state.rows)[(0,)] == "* ▸ group"
 
 
 def test_editor_actions_move_selection_and_toggle_completed_visibility() -> None:
@@ -558,6 +569,84 @@ def test_editor_indent_first_visible_row_is_noop() -> None:
 
     assert [step.description for step in app.document.roadmap.steps] == ["first", "second"]
     assert app.message_bar.value == "cannot indent row"
+
+
+def test_editor_toggle_row_mark_updates_description_prefix() -> None:
+    app = create_editor_app(Document(Roadmap([Task("first")]), "text"))
+    _wire_fake_widgets(app)
+    app._refresh_table()
+
+    app.action_toggle_row_mark()
+
+    assert app.state.selected_paths == {(0,)}
+    assert app.table.rows[0][4].plain == "* first"
+    assert app.message_bar.value == "row selection toggled"
+
+
+def test_editor_group_selected_rows_enters_group_description_edit() -> None:
+    app = create_editor_app(Document(Roadmap([Task("first"), Task("second")]), "text"))
+    _wire_fake_widgets(app)
+    app._refresh_table()
+    app.action_toggle_row_mark()
+    app.action_cursor_down()
+    app.action_toggle_row_mark()
+
+    app.action_group_rows()
+
+    group = app.document.roadmap.steps[0]
+    assert isinstance(group, TaskGroup)
+    assert group.description == "New group"
+    assert [task.description for task in group.tasks] == ["first", "second"]
+    assert app.state.selected_path == (0,)
+    assert app.editing is True
+    assert app.edit_input.value == "New group"
+
+
+def test_editor_group_selected_rows_rejects_different_parents() -> None:
+    app = create_editor_app(
+        Document(
+            Roadmap([Task("top"), TaskGroup("group", tasks=[Task("child")])]),
+            "text",
+        )
+    )
+    _wire_fake_widgets(app)
+    app._refresh_table()
+    app.state.selected_paths = {(0,), (1, 0)}
+
+    app.action_group_rows()
+
+    assert app.message_bar.value == "selected rows must share the same parent"
+
+
+def test_editor_group_single_task_converts_without_editing() -> None:
+    app = create_editor_app(Document(Roadmap([Task("task")]), "text"))
+    _wire_fake_widgets(app)
+    app._refresh_table()
+
+    app.action_group_rows()
+
+    assert isinstance(app.document.roadmap.steps[0], TaskGroup)
+    assert app.editing is False
+    assert app.message_bar.value == "task converted to group"
+
+
+def test_editor_toggle_group_collapsed_action_and_right_click() -> None:
+    app = create_editor_app(
+        Document(Roadmap([TaskGroup("group", tasks=[Task("child")])]), "text")
+    )
+    _wire_fake_widgets(app)
+    app._refresh_table()
+
+    app.action_toggle_group_collapsed()
+    assert [row.description for row in app.state.rows] == ["group"]
+    assert app.table.rows[0][4].plain == "▸ group"
+    assert app.message_bar.value == "group toggled"
+
+    app.table.hover_row = 0
+    stopped: list[bool] = []
+    app.on_mouse_down(SimpleNamespace(button=3, stop=lambda: stopped.append(True)))
+    assert [row.description for row in app.state.rows] == ["group", "child"]
+    assert stopped == [True]
 
 
 def test_editor_highlight_event_updates_internal_selection() -> None:

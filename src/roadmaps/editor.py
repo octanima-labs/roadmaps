@@ -68,6 +68,9 @@ def create_editor_app(document: Document) -> Any:
             ("ctrl+j", "move_row_down", "Move row down"),
             (">", "indent_row", "Indent row"),
             ("<", "outdent_row", "Outdent row"),
+            ("space", "toggle_row_mark", "Select row"),
+            ("ctrl+g", "group_rows", "Group rows"),
+            ("ctrl+t", "toggle_group_collapsed", "Toggle group"),
             ("ctrl+u", "insert_unsorted", "New unsorted"),
             ("ctrl+o", "insert_sorted", "New sorted"),
             ("ctrl+space", "cycle_status", "Cycle status"),
@@ -133,13 +136,13 @@ def create_editor_app(document: Document) -> Any:
             if row is None:
                 self._set_message("no row selected")
                 return
-            if row.completed:
+            if row.completed and not self.state.selected_paths:
                 self._set_message("completed rows are read-only")
                 return
             self._start_prompt(
                 "milestone",
                 "milestone: enter N, (N), or empty to clear",
-                row.milestone_text,
+                "" if self.state.selected_paths else row.milestone_text,
             )
 
         def action_edit_priority(self) -> None:
@@ -149,13 +152,13 @@ def create_editor_app(document: Document) -> Any:
             if row is None:
                 self._set_message("no row selected")
                 return
-            if row.completed:
+            if row.completed and not self.state.selected_paths:
                 self._set_message("completed rows are read-only")
                 return
             self._start_prompt(
                 "priority",
                 "priority: enter !, ?, ^N, N, or empty to clear",
-                row.priority_text,
+                "" if self.state.selected_paths else row.priority_text,
             )
 
         def action_edit_completion(self) -> None:
@@ -164,6 +167,9 @@ def create_editor_app(document: Document) -> Any:
             row = self.state.selected_row
             if row is None:
                 self._set_message("no row selected")
+                return
+            if self.state.selected_paths:
+                self._start_completion_prompt(allow_start=True)
                 return
             if row.group:
                 self._set_message("completion editing is only available for leaf tasks")
@@ -190,6 +196,46 @@ def create_editor_app(document: Document) -> Any:
 
         def action_decrease_completion_large(self) -> None:
             self._adjust_completion_shortcut(-10.0)
+
+        def action_toggle_row_mark(self) -> None:
+            if self.prompt_kind is not None or self.editing:
+                return
+            self._sync_selection_from_table_cursor()
+            if self.state.toggle_selected_row_mark():
+                self._refresh_table()
+                self._set_message("row selection toggled")
+            else:
+                self._set_message("no row selected")
+
+        def action_group_rows(self) -> None:
+            if self.prompt_kind is not None or self.editing:
+                return
+            self._sync_selection_from_table_cursor()
+            had_marks = bool(self.state.selected_paths)
+            try:
+                group = self.state.group_selected_rows()
+            except ValueError as exc:
+                self._set_message(str(exc))
+                return
+            if group is None:
+                self._set_message("row is already a group")
+                return
+            self._refresh_table()
+            if had_marks:
+                self._set_message("rows grouped")
+                self._start_description_edit()
+            else:
+                self._set_message("task converted to group")
+
+        def action_toggle_group_collapsed(self) -> None:
+            if self.prompt_kind is not None or self.editing:
+                return
+            self._sync_selection_from_table_cursor()
+            if self.state.toggle_selected_group_collapsed():
+                self._refresh_table()
+                self._set_message("group toggled")
+            else:
+                self._set_message("selected row is not a group")
 
         def action_move_row_up(self) -> None:
             if self.prompt_kind is not None or self.editing:
@@ -308,6 +354,23 @@ def create_editor_app(document: Document) -> Any:
         def on_data_table_row_highlighted(self, event: Any) -> None:
             self._sync_selection_from_cursor_row(event.cursor_row)
 
+        def on_mouse_down(self, event: Any) -> None:
+            if getattr(event, "button", None) != 3:
+                return
+            table = self._table()
+            hover_row = getattr(table, "hover_row", None)
+            if hover_row is None:
+                return
+            self._sync_selection_from_cursor_row(hover_row)
+            if self.state.toggle_selected_group_collapsed():
+                self._refresh_table()
+                self._set_message("group toggled")
+            else:
+                self._set_message("selected row is not a group")
+            stop = getattr(event, "stop", None)
+            if stop is not None:
+                stop()
+
         def key_escape(self) -> None:
             if self.prompt_kind is not None:
                 self._cancel_prompt()
@@ -399,7 +462,7 @@ def create_editor_app(document: Document) -> Any:
                     completion = parse_completion_prompt(edit_input.value)
                     changed = self.state.update_selected_completion(
                         completion,
-                        allow_start=self.completion_allow_start,
+                        allow_start=self.completion_allow_start or bool(self.state.selected_paths),
                         allow_completed=self.completion_allow_completed,
                     )
                     self._finish_prompt("completion updated" if changed else "completion unchanged")
@@ -610,8 +673,10 @@ def _tree_description_for_row(
     row: EditorRow,
     sibling_indexes: dict[tuple[int, ...], list[int]],
 ) -> str:
+    marker = "* " if row.selected else ""
+    collapsed = "▸ " if row.collapsed else ""
     if row.depth == 0:
-        return row.description
+        return f"{marker}{collapsed}{row.description}"
 
     prefix = ""
     for depth in range(row.depth):
@@ -624,7 +689,7 @@ def _tree_description_for_row(
 
     parent_path = row.path[:-1]
     branch = "├─ " if _has_later_sibling(sibling_indexes, parent_path, row.path[-1]) else "└─ "
-    return f"{prefix}{branch}{row.description}"
+    return f"{prefix}{branch}{marker}{collapsed}{row.description}"
 
 
 def _visible_sibling_indexes(rows: list[EditorRow]) -> dict[tuple[int, ...], list[int]]:

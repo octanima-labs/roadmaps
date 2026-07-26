@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from roadmaps._validation import _validate_description, _validated_task_completion
 from roadmaps.constants import (
@@ -18,6 +18,7 @@ from roadmaps.model import Roadmap, Task, TaskGroup
 
 Path = tuple[int, ...]
 NEW_TASK_DESCRIPTION = "New task"
+NEW_GROUP_DESCRIPTION = "New group"
 
 
 @dataclass(frozen=True)
@@ -33,6 +34,8 @@ class EditorRow:
     status: int
     completed: bool
     group: bool
+    selected: bool
+    collapsed: bool
 
 
 @dataclass
@@ -41,13 +44,20 @@ class EditorState:
     selected_path: Path | None = None
     hide_completed: bool = False
     dirty: bool = False
+    selected_paths: set[Path] = field(default_factory=set)
+    collapsed_item_ids: set[int] = field(default_factory=set)
 
     def __post_init__(self) -> None:
         self.repair_selection()
 
     @property
     def rows(self) -> list[EditorRow]:
-        return _flatten_rows(self.roadmap.steps, self.hide_completed)
+        return _flatten_rows(
+            self.roadmap.steps,
+            self.hide_completed,
+            self.collapsed_item_ids,
+            self.selected_paths,
+        )
 
     @property
     def selected_row(self) -> EditorRow | None:
@@ -65,6 +75,23 @@ class EditorState:
             return False
         self.selected_path = path
         return True
+
+    @property
+    def selected_rows(self) -> list[EditorRow]:
+        return [row for row in self.rows if row.path in self.selected_paths]
+
+    def toggle_selected_row_mark(self) -> bool:
+        row = self.selected_row
+        if row is None:
+            return False
+        if row.path in self.selected_paths:
+            self.selected_paths.remove(row.path)
+        else:
+            self.selected_paths.add(row.path)
+        return True
+
+    def clear_row_marks(self) -> None:
+        self.selected_paths.clear()
 
     def move_selection(self, delta: int) -> bool:
         rows = self.rows
@@ -101,6 +128,7 @@ class EditorState:
         siblings, insert_index = self._insertion_location()
         siblings.insert(insert_index, task)
         self.selected_path = self._path_for_inserted_index(insert_index)
+        self.clear_row_marks()
         self.dirty = True
         return task
 
@@ -110,6 +138,7 @@ class EditorState:
         siblings.insert(insert_index, task)
         _renumber_sorted_siblings(siblings)
         self.selected_path = self._path_for_inserted_index(insert_index)
+        self.clear_row_marks()
         self.dirty = True
         return task
 
@@ -129,6 +158,8 @@ class EditorState:
         return True
 
     def update_selected_milestone(self, milestone: int) -> bool:
+        if self.selected_paths:
+            return self._update_marked_milestone(milestone)
         row = self._editable_selected_row()
         if row is None:
             return False
@@ -142,6 +173,8 @@ class EditorState:
         return True
 
     def update_selected_priority(self, priority: int) -> bool:
+        if self.selected_paths:
+            return self._update_marked_priority(priority)
         row = self._editable_selected_row()
         if row is None:
             return False
@@ -164,6 +197,8 @@ class EditorState:
         allow_start: bool = False,
         allow_completed: bool = False,
     ) -> bool:
+        if self.selected_paths:
+            return self._update_marked_completion(completion, allow_start=allow_start)
         row = self.selected_row
         if row is None:
             return False
@@ -182,6 +217,67 @@ class EditorState:
         if self.roadmap.to_dict() == before:
             return False
         self.dirty = True
+        self.repair_selection()
+        return True
+
+    def group_selected_rows(self) -> TaskGroup | None:
+        marked_rows = self.selected_rows
+        if not marked_rows:
+            return self.convert_selected_task_to_group()
+        if len(marked_rows) < 2:
+            msg = "select multiple rows to group"
+            raise ValueError(msg)
+
+        parent_paths = {row.path[:-1] for row in marked_rows}
+        if len(parent_paths) != 1:
+            msg = "selected rows must share the same parent"
+            raise ValueError(msg)
+
+        parent_path = parent_paths.pop()
+        siblings = _items_at_parent_path(self.roadmap, parent_path)
+        selected_indexes = [row.path[-1] for row in marked_rows]
+        insert_index = min(selected_indexes)
+        first_item = siblings[insert_index]
+        group = TaskGroup(
+            NEW_GROUP_DESCRIPTION,
+            order=first_item.order,
+            tasks=[siblings[index] for index in selected_indexes],
+        )
+        for index in sorted(selected_indexes, reverse=True):
+            siblings.pop(index)
+        siblings.insert(insert_index, group)
+        _renumber_sorted_siblings(group.tasks)
+        _renumber_sorted_siblings(siblings)
+        self.clear_row_marks()
+        self.selected_path = _path_for_item(self.roadmap.steps, group)
+        self.dirty = True
+        return group
+
+    def convert_selected_task_to_group(self) -> TaskGroup | None:
+        row = self.selected_row
+        if row is None:
+            return None
+        if isinstance(row.item, TaskGroup):
+            return None
+
+        siblings, index = _siblings_for_path(self.roadmap, row.path)
+        group = row.item.to_group()
+        siblings[index] = group
+        self.selected_path = _path_for_item(self.roadmap.steps, group)
+        self.clear_row_marks()
+        self.dirty = True
+        return group
+
+    def toggle_selected_group_collapsed(self) -> bool:
+        row = self.selected_row
+        if row is None or not isinstance(row.item, TaskGroup):
+            return False
+        item_id = id(row.item)
+        if item_id in self.collapsed_item_ids:
+            self.collapsed_item_ids.remove(item_id)
+        else:
+            self.collapsed_item_ids.add(item_id)
+        self._repair_row_marks()
         self.repair_selection()
         return True
 
@@ -379,24 +475,85 @@ class EditorState:
         rows = self.rows
         if not rows:
             self.selected_path = None
+            self.selected_paths.clear()
             return
 
         if self.selected_path in {row.path for row in rows}:
+            self._repair_row_marks()
             return
 
         previous_index = _row_index(previous_rows or [], self.selected_path)
         if previous_index is None:
             self.selected_path = rows[0].path
+            self._repair_row_marks()
             return
         if previous_index < len(rows):
             self.selected_path = rows[previous_index].path
+            self._repair_row_marks()
             return
         self.selected_path = rows[-1].path
+        self._repair_row_marks()
 
     def _finish_row_move(self, item: Task | TaskGroup) -> None:
         self.selected_path = _path_for_item(self.roadmap.steps, item)
+        self.clear_row_marks()
         self.dirty = True
         self.repair_selection()
+
+    def _update_marked_milestone(self, milestone: int) -> bool:
+        if milestone < NO_MILESTONE:
+            msg = "milestone must be a non-negative integer"
+            raise ValueError(msg)
+        changed = False
+        for row in self.selected_rows:
+            if row.completed:
+                continue
+            if row.item.milestone != milestone:
+                row.item.milestone = milestone
+                changed = True
+        self.clear_row_marks()
+        if changed:
+            self.dirty = True
+        return changed
+
+    def _update_marked_priority(self, priority: int) -> bool:
+        changed = False
+        for row in self.selected_rows:
+            if row.completed:
+                continue
+            before = (row.item.priority, row.item.optional)
+            if priority == OPTIONAL_TASK:
+                row.item.set_optional(True)
+            else:
+                row.item.set_optional(False)
+                row.item.set_priority(priority)
+            if (row.item.priority, row.item.optional) != before:
+                changed = True
+        self.clear_row_marks()
+        if changed:
+            self.dirty = True
+        return changed
+
+    def _update_marked_completion(self, completion: float, *, allow_start: bool) -> bool:
+        changed = False
+        for row in self.selected_rows:
+            if row.completed or isinstance(row.item, TaskGroup):
+                continue
+            if row.status == NOT_STARTED and not allow_start:
+                continue
+            before = self.roadmap.to_dict()
+            row.item.mark_ongoing(completion=completion)
+            if self.roadmap.to_dict() != before:
+                changed = True
+        self.clear_row_marks()
+        if changed:
+            self.dirty = True
+            self.repair_selection()
+        return changed
+
+    def _repair_row_marks(self) -> None:
+        visible_paths = {row.path for row in self.rows}
+        self.selected_paths.intersection_update(visible_paths)
 
     def _editable_selected_row(self) -> EditorRow | None:
         row = self.selected_row
@@ -423,6 +580,8 @@ class EditorState:
 def _flatten_rows(
     items: list[Task | TaskGroup],
     hide_completed: bool,
+    collapsed_item_ids: set[int],
+    selected_paths: set[Path],
     prefix: Path = (),
 ) -> list[EditorRow]:
     rows: list[EditorRow] = []
@@ -431,13 +590,26 @@ def _flatten_rows(
         if hide_completed and item.status == COMPLETED:
             continue
 
-        rows.append(_row_from_item(item, path))
-        if isinstance(item, TaskGroup):
-            rows.extend(_flatten_rows(item.tasks, hide_completed, path))
+        rows.append(_row_from_item(item, path, selected_paths, collapsed_item_ids))
+        if isinstance(item, TaskGroup) and id(item) not in collapsed_item_ids:
+            rows.extend(
+                _flatten_rows(
+                    item.tasks,
+                    hide_completed,
+                    collapsed_item_ids,
+                    selected_paths,
+                    path,
+                )
+            )
     return rows
 
 
-def _row_from_item(item: Task | TaskGroup, path: Path) -> EditorRow:
+def _row_from_item(
+    item: Task | TaskGroup,
+    path: Path,
+    selected_paths: set[Path],
+    collapsed_item_ids: set[int],
+) -> EditorRow:
     return EditorRow(
         path=path,
         depth=len(path) - 1,
@@ -450,6 +622,8 @@ def _row_from_item(item: Task | TaskGroup, path: Path) -> EditorRow:
         status=item.status,
         completed=item.status == COMPLETED,
         group=isinstance(item, TaskGroup),
+        selected=path in selected_paths,
+        collapsed=isinstance(item, TaskGroup) and id(item) in collapsed_item_ids,
     )
 
 
@@ -533,6 +707,17 @@ def _siblings_for_path(roadmap: Roadmap, path: Path) -> tuple[list[Task | TaskGr
             raise TypeError(msg)
         siblings = parent.tasks
     return siblings, path[-1]
+
+
+def _items_at_parent_path(roadmap: Roadmap, parent_path: Path) -> list[Task | TaskGroup]:
+    if not parent_path:
+        return roadmap.steps
+    siblings, index = _siblings_for_path(roadmap, parent_path)
+    parent = siblings[index]
+    if not isinstance(parent, TaskGroup):
+        msg = "parent row is not a task group"
+        raise TypeError(msg)
+    return parent.tasks
 
 
 def _renumber_sorted_siblings(siblings: list[Task | TaskGroup]) -> None:

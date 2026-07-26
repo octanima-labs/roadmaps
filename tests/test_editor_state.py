@@ -10,6 +10,7 @@ from roadmaps import (
     UNSORTED,
 )
 from roadmaps._editor_state import (
+    NEW_GROUP_DESCRIPTION,
     NEW_TASK_DESCRIPTION,
     EditorState,
     parse_completion_prompt,
@@ -665,3 +666,106 @@ def test_indent_outdent_renumber_sorted_only() -> None:
     assert [step.order for step in state.roadmap.steps] == [1, UNSORTED]
     state.outdent_selected_row()
     assert [step.order for step in state.roadmap.steps] == [1, 2, UNSORTED]
+
+
+def test_toggle_selected_row_mark_persists_while_moving_cursor() -> None:
+    state = EditorState(Roadmap([Task("first"), Task("second")]))
+
+    assert state.toggle_selected_row_mark() is True
+    assert state.selected_paths == {(0,)}
+
+    state.move_selection(1)
+    assert state.selected_path == (1,)
+    assert state.selected_paths == {(0,)}
+
+    assert state.toggle_selected_row_mark() is True
+    assert state.selected_paths == {(0,), (1,)}
+
+
+def test_bulk_metadata_updates_selected_rows_and_skips_completed() -> None:
+    first = Task("first")
+    done = Task("done", status=COMPLETED)
+    second = Task("second")
+    state = EditorState(Roadmap([first, done, second]))
+    state.selected_paths = {(0,), (1,), (2,)}
+
+    assert state.update_selected_milestone(4) is True
+    assert [task.milestone for task in state.roadmap.steps] == [4, 0, 4]
+    assert state.selected_paths == set()
+
+    state.selected_paths = {(0,), (1,), (2,)}
+    assert state.update_selected_priority(OPTIONAL_TASK) is True
+    assert first.optional is True
+    assert done.optional is False
+    assert second.optional is True
+    assert state.selected_paths == set()
+
+
+def test_bulk_completion_updates_valid_selected_rows() -> None:
+    first = Task("first")
+    group = TaskGroup("group", tasks=[Task("child")])
+    done = Task("done", status=COMPLETED)
+    state = EditorState(Roadmap([first, group, done]))
+    state.selected_paths = {(0,), (1,), (2,)}
+
+    assert state.update_selected_completion(25.0, allow_start=True) is True
+
+    assert first.status == ONGOING
+    assert first.completion == 25.0
+    assert group.status == NOT_STARTED
+    assert done.status == COMPLETED
+    assert state.selected_paths == set()
+
+
+def test_group_selected_rows_requires_same_parent() -> None:
+    state = EditorState(
+        Roadmap([Task("top"), TaskGroup("group", tasks=[Task("child")])])
+    )
+    state.selected_paths = {(0,), (1, 0)}
+
+    with pytest.raises(ValueError, match="same parent"):
+        state.group_selected_rows()
+
+
+def test_group_selected_rows_replaces_siblings_with_new_group() -> None:
+    first = Task("first", order=1)
+    second = Task("second", order=2)
+    loose = Task("loose")
+    state = EditorState(Roadmap([first, second, loose]))
+    state.selected_paths = {(0,), (1,)}
+
+    group = state.group_selected_rows()
+
+    assert group is not None
+    assert group.description == NEW_GROUP_DESCRIPTION
+    assert isinstance(state.roadmap.steps[0], TaskGroup)
+    assert state.roadmap.steps[0].tasks == [first, second]
+    assert [task.order for task in state.roadmap.steps[0].tasks] == [1, 2]
+    assert [step.order for step in state.roadmap.steps] == [1, UNSORTED]
+    assert state.selected_path == (0,)
+    assert state.selected_paths == set()
+
+
+def test_group_selected_rows_converts_single_focused_task() -> None:
+    state = EditorState(Roadmap([Task("task")]))
+
+    group = state.group_selected_rows()
+
+    assert group == TaskGroup("task")
+    assert isinstance(state.roadmap.steps[0], TaskGroup)
+    assert state.selected_path == (0,)
+
+
+def test_toggle_selected_group_collapsed_hides_descendants_and_repairs_marks() -> None:
+    group = TaskGroup("group", tasks=[Task("child"), Task("other")])
+    state = EditorState(Roadmap([group, Task("after")]))
+    state.selected_paths = {(0, 0)}
+
+    assert state.toggle_selected_group_collapsed() is True
+
+    assert [row.description for row in state.rows] == ["group", "after"]
+    assert state.rows[0].collapsed is True
+    assert state.selected_paths == set()
+
+    assert state.toggle_selected_group_collapsed() is True
+    assert [row.description for row in state.rows] == ["group", "child", "other", "after"]
