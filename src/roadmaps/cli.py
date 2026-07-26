@@ -39,7 +39,7 @@ def main(argv: list[str] | None = None) -> int:
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="roadmaps",
+        prog="roadmap",
         description="Inspect and update roadmap files.",
     )
     subparsers = parser.add_subparsers(dest="command", required=True)

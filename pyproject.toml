@@ -36,7 +36,7 @@ editor = [
 ]
 
 [project.scripts]
-roadmaps = "roadmaps.cli:main"
+roadmap = "roadmaps.cli:main"
 
 [project.urls]
 Repository = "https://github.com/octanima-labs/roadmaps"

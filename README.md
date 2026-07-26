@@ -180,39 +180,39 @@ print(roadmap.to_text())
 
 ## CLI
 
-The `roadmaps` command infers input format from `.roadmap`, `.txt`, `.json`, `.yaml`, `.yml`, `.md`, and `.markdown` extensions, or accepts `--format text|json|yaml|markdown`.
+The `roadmap` command infers input format from `.roadmap`, `.txt`, `.json`, `.yaml`, `.yml`, `.md`, and `.markdown` extensions, or accepts `--format text|json|yaml|markdown`.
 
 Validate a file:
 
 ```bash
-roadmaps validate roadmap.roadmap
+roadmap validate roadmap.roadmap
 ```
 
 Show next-step tasks in the source format:
 
 ```bash
-roadmaps next roadmap.md
+roadmap next roadmap.md
 ```
 
 Render between formats:
 
 ```bash
-roadmaps render roadmap.roadmap --to markdown
-roadmaps render roadmap.json --to yaml
+roadmap render roadmap.roadmap --to markdown
+roadmap render roadmap.json --to yaml
 ```
 
 Show completion and task counts:
 
 ```bash
-roadmaps stats roadmap.json
+roadmap stats roadmap.json
 ```
 
 Filter roadmap items:
 
 ```bash
-roadmaps show roadmap.roadmap --uncompleted
-roadmaps show roadmap.md --completed --ongoing --optional
-roadmaps show roadmap.yaml --category docs 'feat(parser)' --to markdown
+roadmap show roadmap.roadmap --uncompleted
+roadmap show roadmap.md --completed --ongoing --optional
+roadmap show roadmap.yaml --category docs 'feat(parser)' --to markdown
 ```
 
 `show` returns flat `Task` and `TaskGroup` matches in traversal order. Status filters combine by union, optional items are hidden unless `--optional` or `--all` is supplied, categories match conventional prefixes such as `docs:` or `feat(parser):`, and no matches returns `no matching tasks` with exit code `0`.
@@ -220,10 +220,10 @@ roadmaps show roadmap.yaml --category docs 'feat(parser)' --to markdown
 Create a new empty roadmap file:
 
 ```bash
-roadmaps init roadmap.roadmap
-roadmaps init --format json roadmap.data
-roadmaps init --format yaml roadmap.data
-roadmaps init --example roadmap.md
+roadmap init roadmap.roadmap
+roadmap init --format json roadmap.data
+roadmap init --format yaml roadmap.data
+roadmap init --example roadmap.md
 ```
 
 `init` refuses to overwrite existing files. Unknown extensions default to text unless `--format` is provided. Markdown initialization writes a `## Roadmap` section. Use `--example` to create a feature-rich starter roadmap.
@@ -231,15 +231,15 @@ roadmaps init --example roadmap.md
 Append a top-level task or add a nested child by 1-based dotted path:
 
 ```bash
-roadmaps add-task roadmap.roadmap -d "docs: publish examples" --urgent --milestone 1
-roadmaps add-task roadmap.json -d "core: partial work" --status ongoing --completion 50.0
-roadmaps add-task roadmap.yaml -d "core: partial work" --status ongoing --completion 50.0
-roadmaps add-task roadmap.roadmap --parent 1.2 -d "nested child"
+roadmap add-task roadmap.roadmap -d "docs: publish examples" --urgent --milestone 1
+roadmap add-task roadmap.json -d "core: partial work" --status ongoing --completion 50.0
+roadmap add-task roadmap.yaml -d "core: partial work" --status ongoing --completion 50.0
+roadmap add-task roadmap.roadmap --parent 1.2 -d "nested child"
 ```
 
 `add-task` supports `--order`, `--priority`, `--urgent`, `--optional`, `--milestone`, `--status not-started|ongoing|completed`, and `--completion`. With `--parent`, the parent path counts all siblings at each level, leaf parents are converted to groups, child order is assigned automatically, and omitted milestones inherit from the parent. Ongoing and completed tasks created through `add-task` receive JSON-persisted date fields automatically. Markdown saves preserve an existing `Roadmap` section heading level.
 
-`roadmaps editor [PATH] [--format text|json|yaml|markdown]` launches an MVP Textual editor when `roadmaps[editor]` is installed. It shows a path/format/dirty top bar and order, completion, priority, milestone, and tree-prefixed description columns. MVP keybindings include up/down navigation, Enter description edit, Escape cancel edit, `ctrl+u`, `ctrl+o`, `ctrl+space`, `ctrl+h`, and `ctrl+s`; unnamed saves show a deferred save-path message. Without Textual it returns `error: Textual is required for the editor; install roadmaps[editor]`.
+`roadmap editor [PATH] [--format text|json|yaml|markdown]` launches an MVP Textual editor when `roadmaps[editor]` is installed. It shows a path/format/dirty top bar and order, completion, priority, milestone, and tree-prefixed description columns. MVP keybindings include up/down navigation, Enter description edit, Escape cancel edit, `ctrl+u`, `ctrl+o`, `ctrl+space`, `ctrl+h`, and `ctrl+s`; unnamed saves show a deferred save-path message. Without Textual it returns `error: Textual is required for the editor; install roadmaps[editor]`.
 
 ## Development
 

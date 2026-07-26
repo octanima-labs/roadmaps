@@ -1,3 +1,4 @@
+import tomllib
 from pathlib import Path
 
 import pytest
@@ -5,6 +6,23 @@ import pytest
 from roadmaps import COMPLETED, ONGOING, Roadmap, Task
 from roadmaps._documents import Document
 from roadmaps.cli import main
+
+
+def test_cli_help_uses_singular_program_name(capsys) -> None:
+    with pytest.raises(SystemExit) as exc_info:
+        main(["--help"])
+
+    assert exc_info.value.code == 0
+    assert capsys.readouterr().out.startswith("usage: roadmap ")
+
+
+def test_pyproject_exposes_singular_console_script() -> None:
+    pyproject = Path(__file__).parents[1] / "pyproject.toml"
+    metadata = tomllib.loads(pyproject.read_text())
+
+    assert metadata["project"]["scripts"] == {
+        "roadmap": "roadmaps.cli:main",
+    }
 
 
 def test_validate_accepts_text_json_yaml_and_markdown_files(
