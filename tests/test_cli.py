@@ -6,22 +6,29 @@ from roadmaps import COMPLETED, ONGOING, Roadmap, Task
 from roadmaps.cli import main
 
 
-def test_validate_accepts_text_json_and_markdown_files(tmp_path: Path, capsys) -> None:
+def test_validate_accepts_text_json_yaml_and_markdown_files(
+    tmp_path: Path,
+    capsys,
+) -> None:
     roadmap = Roadmap.from_text("- [ ]^900 (1) first")
     text_path = tmp_path / "roadmap.roadmap"
     json_path = tmp_path / "roadmap.json"
+    yaml_path = tmp_path / "roadmap.yaml"
     markdown_path = tmp_path / "roadmap.md"
     text_path.write_text(roadmap.to_text())
     json_path.write_text(roadmap.to_json())
+    yaml_path.write_text(roadmap.to_yaml())
     markdown_path.write_text("# Roadmap\n\n" + roadmap.to_markdown())
 
     assert main(["validate", str(text_path)]) == 0
     assert main(["validate", str(json_path)]) == 0
+    assert main(["validate", str(yaml_path)]) == 0
     assert main(["validate", str(markdown_path)]) == 0
 
     output = capsys.readouterr().out
     assert "valid text roadmap" in output
     assert "valid json roadmap" in output
+    assert "valid yaml roadmap" in output
     assert "valid markdown roadmap" in output
 
 
@@ -59,6 +66,16 @@ def test_render_converts_between_formats(tmp_path: Path, capsys) -> None:
     assert main(["render", str(path), "--to", "markdown"]) == 0
 
     assert capsys.readouterr().out == "- [ ] (900:1) serialize\n"
+
+
+def test_render_supports_yaml_output(tmp_path: Path, capsys) -> None:
+    path = tmp_path / "roadmap.roadmap"
+    roadmap = Roadmap.from_text("- [ ]^900 (1) serialize")
+    path.write_text(roadmap.to_text())
+
+    assert main(["render", str(path), "--to", "yaml"]) == 0
+
+    assert Roadmap.from_yaml(capsys.readouterr().out) == roadmap
 
 
 def test_show_outputs_matching_items_in_source_format(tmp_path: Path, capsys) -> None:
@@ -154,17 +171,30 @@ def test_show_supports_json_input_and_output(tmp_path: Path, capsys) -> None:
     assert Roadmap.from_json(output) == Roadmap([Task("docs: task")])
 
 
-def test_init_creates_text_json_and_markdown_files(tmp_path: Path, capsys) -> None:
+def test_show_supports_yaml_input_and_output(tmp_path: Path, capsys) -> None:
+    path = tmp_path / "roadmap.yml"
+    path.write_text(Roadmap.from_text("- [ ] docs: task\n- [ ] core: hidden").to_yaml())
+
+    assert main(["show", str(path), "-c", "docs"]) == 0
+
+    output = capsys.readouterr().out
+    assert Roadmap.from_yaml(output) == Roadmap([Task("docs: task")])
+
+
+def test_init_creates_text_json_yaml_and_markdown_files(tmp_path: Path, capsys) -> None:
     text_path = tmp_path / "roadmap.roadmap"
     json_path = tmp_path / "roadmap.json"
+    yaml_path = tmp_path / "roadmap.yaml"
     markdown_path = tmp_path / "roadmap.md"
 
     assert main(["init", str(text_path)]) == 0
     assert main(["init", str(json_path)]) == 0
+    assert main(["init", str(yaml_path)]) == 0
     assert main(["init", str(markdown_path)]) == 0
 
     assert text_path.read_text() == ""
     assert Roadmap.from_json(json_path.read_text()) == Roadmap()
+    assert Roadmap.from_yaml(yaml_path.read_text()) == Roadmap()
     assert markdown_path.read_text() == "# Roadmap\n\n"
     assert "created text roadmap" in capsys.readouterr().out
 
@@ -186,6 +216,14 @@ def test_init_supports_format_override(tmp_path: Path) -> None:
     assert Roadmap.from_json(path.read_text()) == Roadmap()
 
 
+def test_init_supports_yaml_format_override(tmp_path: Path) -> None:
+    path = tmp_path / "roadmap.data"
+
+    assert main(["init", "--format", "yaml", str(path)]) == 0
+
+    assert Roadmap.from_yaml(path.read_text()) == Roadmap()
+
+
 def test_init_example_creates_feature_rich_roadmap(tmp_path: Path) -> None:
     path = tmp_path / "roadmap.roadmap"
 
@@ -200,14 +238,17 @@ def test_init_example_creates_feature_rich_roadmap(tmp_path: Path) -> None:
     assert any(task.completion == 50.0 for task in tasks)
 
 
-def test_init_example_supports_json_and_markdown(tmp_path: Path) -> None:
+def test_init_example_supports_json_yaml_and_markdown(tmp_path: Path) -> None:
     json_path = tmp_path / "roadmap.json"
+    yaml_path = tmp_path / "roadmap.yaml"
     markdown_path = tmp_path / "roadmap.md"
 
     assert main(["init", "--example", str(json_path)]) == 0
+    assert main(["init", "--example", str(yaml_path)]) == 0
     assert main(["init", "--example", str(markdown_path)]) == 0
 
     assert Roadmap.from_json(json_path.read_text()).leaf_tasks()
+    assert Roadmap.from_yaml(yaml_path.read_text()).leaf_tasks()
     assert Roadmap.from_markdown(markdown_path.read_text()).leaf_tasks()
 
 
@@ -267,6 +308,36 @@ def test_add_task_preserves_json_format(tmp_path: Path) -> None:
     )
 
     task = Roadmap.from_json(path.read_text()).steps[0]
+
+    assert isinstance(task, Task)
+    assert task.description == "partial"
+    assert task.status == ONGOING
+    assert task.completion == 50.0
+    assert task.start_date is not None
+    assert task.completion_date is None
+
+
+def test_add_task_preserves_yaml_format(tmp_path: Path) -> None:
+    path = tmp_path / "roadmap.yaml"
+    path.write_text(Roadmap().to_yaml())
+
+    assert (
+        main(
+            [
+                "add-task",
+                str(path),
+                "-d",
+                "partial",
+                "--status",
+                "ongoing",
+                "--completion",
+                "50.0",
+            ]
+        )
+        == 0
+    )
+
+    task = Roadmap.from_yaml(path.read_text()).steps[0]
 
     assert isinstance(task, Task)
     assert task.description == "partial"

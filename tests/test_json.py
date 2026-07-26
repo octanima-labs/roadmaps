@@ -100,6 +100,13 @@ def test_task_group_dict_round_trip_uses_tasks_to_imply_group() -> None:
     assert TaskGroup.from_dict(data) == group
 
 
+def test_task_group_json_round_trip_includes_child_tasks() -> None:
+    group = TaskGroup("group", tasks=[Task("child")])
+
+    assert "tasks" in group.to_json()
+    assert TaskGroup.from_json(group.to_json()) == group
+
+
 def test_task_group_json_includes_derived_dates_when_present() -> None:
     started = datetime(2026, 1, 1, 10, tzinfo=UTC)
     completed = datetime(2026, 1, 1, 11, tzinfo=UTC)

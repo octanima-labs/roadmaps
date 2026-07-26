@@ -222,6 +222,17 @@ class Task:
 
         return JsonSerializer.task_from_json(source)
 
+    def to_yaml(self) -> str:
+        from roadmaps.serializers import YamlSerializer
+
+        return YamlSerializer.task_to_yaml(self)
+
+    @classmethod
+    def from_yaml(cls, source: str) -> Task:
+        from roadmaps.serializers import YamlSerializer
+
+        return YamlSerializer.task_from_yaml(source)
+
 
 @dataclass(init=False)
 class TaskGroup(Task):
@@ -370,6 +381,22 @@ class TaskGroup(Task):
 
         return JsonSerializer.task_group_from_json(source)
 
+    def to_json(self) -> str:
+        from roadmaps.serializers import JsonSerializer
+
+        return JsonSerializer.task_group_to_json(self)
+
+    def to_yaml(self) -> str:
+        from roadmaps.serializers import YamlSerializer
+
+        return YamlSerializer.task_group_to_yaml(self)
+
+    @classmethod
+    def from_yaml(cls, source: str) -> TaskGroup:
+        from roadmaps.serializers import YamlSerializer
+
+        return YamlSerializer.task_group_from_yaml(source)
+
 
 @dataclass
 class Roadmap:
@@ -498,6 +525,17 @@ class Roadmap:
         from roadmaps.serializers import JsonSerializer
 
         return JsonSerializer.roadmap_from_json(source)
+
+    def to_yaml(self) -> str:
+        from roadmaps.serializers import YamlSerializer
+
+        return YamlSerializer.roadmap_to_yaml(self)
+
+    @classmethod
+    def from_yaml(cls, source: str) -> Roadmap:
+        from roadmaps.serializers import YamlSerializer
+
+        return YamlSerializer.roadmap_from_yaml(source)
 
     def to_text(self) -> str:
         from roadmaps.renderers import TextRenderer

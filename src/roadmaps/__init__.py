@@ -11,7 +11,12 @@ from .constants import (
 from .model import Roadmap, Task, TaskGroup
 from .parsers import MarkdownParser, TextParser
 from .renderers import MarkdownRenderer, TextRenderer
-from .serializers import JsonSerializer, JSONValidationError
+from .serializers import (
+    JsonSerializer,
+    JSONValidationError,
+    YamlSerializer,
+    YAMLValidationError,
+)
 
 __all__ = [
     "COMPLETED",
@@ -31,4 +36,6 @@ __all__ = [
     "TaskGroup",
     "TextParser",
     "TextRenderer",
+    "YAMLValidationError",
+    "YamlSerializer",
 ]

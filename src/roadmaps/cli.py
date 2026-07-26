@@ -23,8 +23,9 @@ Format = str
 
 TEXT_EXTENSIONS = {".roadmap", ".txt"}
 JSON_EXTENSIONS = {".json"}
+YAML_EXTENSIONS = {".yaml", ".yml"}
 MARKDOWN_EXTENSIONS = {".md", ".markdown"}
-FORMATS = ("text", "json", "markdown")
+FORMATS = ("text", "json", "yaml", "markdown")
 STATUSES = ("not-started", "ongoing", "completed")
 
 
@@ -268,6 +269,8 @@ def _detect_format(
         return "text"
     if suffix in JSON_EXTENSIONS:
         return "json"
+    if suffix in YAML_EXTENSIONS:
+        return "yaml"
     if suffix in MARKDOWN_EXTENSIONS:
         return "markdown"
     if default is not None:
@@ -282,6 +285,8 @@ def _parse_roadmap(source: str, source_format: Format) -> Roadmap:
         return Roadmap.from_text(source)
     if source_format == "json":
         return Roadmap.from_json(source)
+    if source_format == "yaml":
+        return Roadmap.from_yaml(source)
     if source_format == "markdown":
         return Roadmap.from_markdown(source)
 
@@ -294,6 +299,8 @@ def _render_roadmap(roadmap: Roadmap, output_format: Format) -> str:
         return roadmap.to_text()
     if output_format == "json":
         return roadmap.to_json()
+    if output_format == "yaml":
+        return roadmap.to_yaml()
     if output_format == "markdown":
         return roadmap.to_markdown()
 

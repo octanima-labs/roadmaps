@@ -2,7 +2,7 @@
 
 `roadmaps` is a Python library for structured, human-editable roadmap files.
 
-It models roadmap items as `Roadmap`, `TaskGroup`, and `Task` objects with status, ordering, priority, optionality, milestones, completion, next-step selection, custom text parsing/rendering, Markdown parsing/rendering, JSON round-trips, and a CLI.
+It models roadmap items as `Roadmap`, `TaskGroup`, and `Task` objects with status, ordering, priority, optionality, milestones, completion, next-step selection, custom text parsing/rendering, Markdown parsing/rendering, JSON/YAML round-trips, and a CLI.
 
 The current package is alpha software. The CLI can inspect, convert, initialize, and append top-level or nested tasks to roadmap files.
 
@@ -12,6 +12,12 @@ This package is not published yet. Install it from a local clone:
 
 ```bash
 python -m pip install /path/to/roadmaps/public
+```
+
+YAML support is optional and uses PyYAML:
+
+```bash
+python -m pip install "/path/to/roadmaps/public[yaml]"
 ```
 
 Or install it editable while developing:
@@ -66,9 +72,9 @@ Syntax summary:
 - Descriptions do not support headings, blockquotes, fenced code blocks, tables, or nested block lists.
 - Blank lines and `#` comments are ignored.
 
-## JSON Round-Trips
+## JSON And YAML Round-Trips
 
-Use JSON when a stable machine-readable representation is needed.
+Use JSON when a stable machine-readable representation is needed. YAML uses the same schema and is available when PyYAML is installed.
 
 ```python
 from roadmaps import JSONValidationError, Roadmap
@@ -84,7 +90,25 @@ except JSONValidationError as error:
 assert loaded == roadmap
 ```
 
-JSON deserialization is strict. Decode errors include line and column details, and schema errors include JSON paths such as `$.steps[0].tasks[1].priority`.
+JSON and YAML deserialization are strict. Decode errors include line and column details when available, and schema errors include JSON paths such as `$.steps[0].tasks[1].priority`.
+
+YAML mirrors the JSON API with `to_yaml()` and `from_yaml()`:
+
+```python
+from roadmaps import Roadmap, YAMLValidationError
+
+roadmap = Roadmap.from_text("- [ ]^900 (1) yaml: serialize roadmap")
+payload = roadmap.to_yaml()
+
+try:
+    loaded = Roadmap.from_yaml(payload)
+except YAMLValidationError as error:
+    print(error)
+
+assert loaded == roadmap
+```
+
+If PyYAML is not installed, YAML methods and CLI commands raise a clear error asking for `roadmaps[yaml]`.
 
 Leaf task `completion` is loaded for ongoing tasks. Not-started tasks must use `0.0`, completed tasks must use `100.0`, and ongoing tasks may use `0.0` or a one-decimal value from `1.0` through `99.0`. Group and roadmap completion values are derived from children and recomputed on load.
 
@@ -120,6 +144,7 @@ Useful entry points:
 
 - `Roadmap.from_text(source)` and `roadmap.to_text()`
 - `Roadmap.from_json(source)` and `roadmap.to_json()`
+- `Roadmap.from_yaml(source)` and `roadmap.to_yaml()`
 - `Roadmap.from_dict(data)` and `roadmap.to_dict()`
 - `Roadmap.from_markdown(source)` and `roadmap.to_markdown()`
 - `roadmap.next_step()` for incomplete leaf tasks ordered by priority/status/order
@@ -149,7 +174,7 @@ print(roadmap.to_text())
 
 ## CLI
 
-The `roadmaps` command infers input format from `.roadmap`, `.txt`, `.json`, `.md`, and `.markdown` extensions, or accepts `--format text|json|markdown`.
+The `roadmaps` command infers input format from `.roadmap`, `.txt`, `.json`, `.yaml`, `.yml`, `.md`, and `.markdown` extensions, or accepts `--format text|json|yaml|markdown`.
 
 Validate a file:
 
@@ -167,6 +192,7 @@ Render between formats:
 
 ```bash
 roadmaps render roadmap.roadmap --to markdown
+roadmaps render roadmap.json --to yaml
 ```
 
 Show completion and task counts:
@@ -180,7 +206,7 @@ Filter roadmap items:
 ```bash
 roadmaps show roadmap.roadmap --uncompleted
 roadmaps show roadmap.md --completed --ongoing --optional
-roadmaps show roadmap.json --category docs 'feat(parser)' --to markdown
+roadmaps show roadmap.yaml --category docs 'feat(parser)' --to markdown
 ```
 
 `show` returns flat `Task` and `TaskGroup` matches in traversal order. Status filters combine by union, optional items are hidden unless `--optional` or `--all` is supplied, categories match conventional prefixes such as `docs:` or `feat(parser):`, and no matches returns `no matching tasks` with exit code `0`.
@@ -190,6 +216,7 @@ Create a new empty roadmap file:
 ```bash
 roadmaps init roadmap.roadmap
 roadmaps init --format json roadmap.data
+roadmaps init --format yaml roadmap.data
 roadmaps init --example roadmap.md
 ```
 
@@ -200,6 +227,7 @@ Append a top-level task or add a nested child by 1-based dotted path:
 ```bash
 roadmaps add-task roadmap.roadmap -d "docs: publish examples" --urgent --milestone 1
 roadmaps add-task roadmap.json -d "core: partial work" --status ongoing --completion 50.0
+roadmaps add-task roadmap.yaml -d "core: partial work" --status ongoing --completion 50.0
 roadmaps add-task roadmap.roadmap --parent 1.2 -d "nested child"
 ```
 

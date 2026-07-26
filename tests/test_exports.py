@@ -11,6 +11,8 @@ from roadmaps import (
     TaskGroup,
     TextParser,
     TextRenderer,
+    YamlSerializer,
+    YAMLValidationError,
 )
 from roadmaps.constants import COMPLETED as ConstantsCompleted
 from roadmaps.constants import DEFAULT_PRIORITY as ConstantsDefaultPriority
@@ -23,11 +25,15 @@ from roadmaps.renderers import MarkdownRenderer as ModuleMarkdownRenderer
 from roadmaps.renderers import TextRenderer as ModuleTextRenderer
 from roadmaps.serializers import JsonSerializer as ModuleJsonSerializer
 from roadmaps.serializers import JSONValidationError as ModuleJSONValidationError
+from roadmaps.serializers import YamlSerializer as ModuleYamlSerializer
+from roadmaps.serializers import YAMLValidationError as ModuleYAMLValidationError
 
 
 def test_format_classes_are_public_exports() -> None:
     assert JsonSerializer is ModuleJsonSerializer
     assert JSONValidationError is ModuleJSONValidationError
+    assert YamlSerializer is ModuleYamlSerializer
+    assert YAMLValidationError is ModuleYAMLValidationError
     assert TextParser is ModuleTextParser
     assert MarkdownParser is ModuleMarkdownParser
     assert TextRenderer is ModuleTextRenderer

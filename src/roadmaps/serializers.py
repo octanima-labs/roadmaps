@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from collections.abc import Mapping
 from datetime import UTC, datetime
+from importlib import import_module
 from typing import Any
 
 from roadmaps._validation import (
@@ -42,6 +43,10 @@ ROADMAP_JSON_KEYS = {"completion", "steps"}
 
 class JSONValidationError(ValueError):
     """Raised when roadmap JSON cannot be decoded or validated."""
+
+
+class YAMLValidationError(ValueError):
+    """Raised when roadmap YAML cannot be decoded or validated."""
 
 
 class JsonSerializer:
@@ -93,6 +98,10 @@ class JsonSerializer:
         return JsonSerializer.task_group_from_dict(_loads_json(source))
 
     @staticmethod
+    def task_group_to_json(group: TaskGroup) -> str:
+        return json.dumps(JsonSerializer.task_group_to_dict(group), indent=2)
+
+    @staticmethod
     def item_to_dict(item: Task | TaskGroup) -> dict[str, Any]:
         if isinstance(item, TaskGroup):
             return JsonSerializer.task_group_to_dict(item)
@@ -128,6 +137,68 @@ class JsonSerializer:
     @staticmethod
     def roadmap_from_json(source: str) -> Roadmap:
         return JsonSerializer.roadmap_from_dict(_loads_json(source))
+
+
+class YamlSerializer:
+    @staticmethod
+    def task_to_yaml(task: Task) -> str:
+        return _dumps_yaml(JsonSerializer.task_to_dict(task))
+
+    @staticmethod
+    def task_from_yaml(source: str) -> Task:
+        return _as_yaml_error(lambda: JsonSerializer.task_from_dict(_loads_yaml(source)))
+
+    @staticmethod
+    def task_group_to_yaml(group: TaskGroup) -> str:
+        return _dumps_yaml(JsonSerializer.task_group_to_dict(group))
+
+    @staticmethod
+    def task_group_from_yaml(source: str) -> TaskGroup:
+        return _as_yaml_error(lambda: JsonSerializer.task_group_from_dict(_loads_yaml(source)))
+
+    @staticmethod
+    def roadmap_to_yaml(roadmap: Roadmap) -> str:
+        return _dumps_yaml(JsonSerializer.roadmap_to_dict(roadmap))
+
+    @staticmethod
+    def roadmap_from_yaml(source: str) -> Roadmap:
+        return _as_yaml_error(lambda: JsonSerializer.roadmap_from_dict(_loads_yaml(source)))
+
+
+def _load_yaml() -> Any:
+    try:
+        return import_module("yaml")
+    except ModuleNotFoundError as exc:
+        msg = "PyYAML is required for YAML support; install roadmaps[yaml]"
+        raise YAMLValidationError(msg) from exc
+
+
+def _dumps_yaml(data: object) -> str:
+    yaml: Any = _load_yaml()
+    return yaml.safe_dump(data, sort_keys=False)
+
+
+def _loads_yaml(source: str) -> object:
+    yaml: Any = _load_yaml()
+    try:
+        return yaml.safe_load(source)
+    except yaml.YAMLError as exc:
+        mark = getattr(exc, "problem_mark", None)
+        problem = getattr(exc, "problem", None) or str(exc)
+        if mark is not None:
+            msg = f"Invalid YAML at line {mark.line + 1}, column {mark.column + 1}: {problem}"
+        else:
+            msg = f"Invalid YAML: {problem}"
+        raise YAMLValidationError(msg) from exc
+
+
+def _as_yaml_error(load: Any) -> Any:
+    try:
+        return load()
+    except YAMLValidationError:
+        raise
+    except JSONValidationError as exc:
+        raise YAMLValidationError(str(exc)) from exc
 
 
 def _datetime_to_json(value: datetime) -> str:

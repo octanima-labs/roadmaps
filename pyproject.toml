@@ -28,6 +28,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+yaml = [
+  "PyYAML",
+]
 editor = [
   "textual",
 ]
@@ -45,6 +48,7 @@ dev = [
   "build",
   "mypy",
   "pytest",
+  "PyYAML",
   "ruff",
 ]
 docs = [
@@ -69,6 +73,7 @@ dependencies = [
   "build",
   "mypy",
   "pytest",
+  "PyYAML",
   "ruff",
 ]
 
