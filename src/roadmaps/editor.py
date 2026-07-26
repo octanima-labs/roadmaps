@@ -4,8 +4,15 @@ from importlib import import_module
 from typing import Any
 
 from roadmaps._documents import Document, save_document
-from roadmaps._editor_state import EditorRow, EditorState
-from roadmaps.constants import COMPLETED, ONGOING
+from roadmaps._editor_state import (
+    EditorRow,
+    EditorState,
+    parse_completion_prompt,
+    parse_confirmation_prompt,
+    parse_milestone_prompt,
+    parse_priority_prompt,
+)
+from roadmaps.constants import COMPLETED, NOT_STARTED, ONGOING
 
 
 def run_editor(document: Document) -> int:
@@ -50,6 +57,9 @@ def create_editor_app(document: Document) -> Any:
             ("up", "cursor_up", "Up"),
             ("down", "cursor_down", "Down"),
             ("enter", "edit_description", "Edit"),
+            ("ctrl+m", "edit_milestone", "Milestone"),
+            ("ctrl+p", "edit_priority", "Priority"),
+            ("ctrl+e", "edit_completion", "Completion"),
             ("ctrl+u", "insert_unsorted", "New unsorted"),
             ("ctrl+o", "insert_sorted", "New sorted"),
             ("ctrl+space", "cycle_status", "Cycle status"),
@@ -67,6 +77,9 @@ def create_editor_app(document: Document) -> Any:
             self.edit_input: Any | None = None
             self.message_bar: Any | None = None
             self.editing = False
+            self.prompt_kind: str | None = None
+            self.completion_allow_start = False
+            self.completion_allow_completed = False
 
         def compose(self) -> Any:
             self.top_bar = static(_top_bar_text(self.document, self.state), id="top-bar")
@@ -88,20 +101,77 @@ def create_editor_app(document: Document) -> Any:
             self._refresh_table()
 
         def action_cursor_up(self) -> None:
+            self._cancel_prompt()
             self._exit_edit_mode(commit=False)
             if self.state.move_selection(-1):
                 self._select_current_row()
 
         def action_cursor_down(self) -> None:
+            self._cancel_prompt()
             self._exit_edit_mode(commit=False)
             if self.state.move_selection(1):
                 self._select_current_row()
 
         def action_edit_description(self) -> None:
+            self._cancel_prompt()
             self._sync_selection_from_table_cursor()
             self._start_description_edit()
 
+        def action_edit_milestone(self) -> None:
+            self._exit_edit_mode(commit=False)
+            self._sync_selection_from_table_cursor()
+            row = self.state.selected_row
+            if row is None:
+                self._set_message("no row selected")
+                return
+            if row.completed:
+                self._set_message("completed rows are read-only")
+                return
+            self._start_prompt(
+                "milestone",
+                "milestone: enter N, (N), or empty to clear",
+                row.milestone_text,
+            )
+
+        def action_edit_priority(self) -> None:
+            self._exit_edit_mode(commit=False)
+            self._sync_selection_from_table_cursor()
+            row = self.state.selected_row
+            if row is None:
+                self._set_message("no row selected")
+                return
+            if row.completed:
+                self._set_message("completed rows are read-only")
+                return
+            self._start_prompt(
+                "priority",
+                "priority: enter !, ?, ^N, N, or empty to clear",
+                row.priority_text,
+            )
+
+        def action_edit_completion(self) -> None:
+            self._exit_edit_mode(commit=False)
+            self._sync_selection_from_table_cursor()
+            row = self.state.selected_row
+            if row is None:
+                self._set_message("no row selected")
+                return
+            if row.group:
+                self._set_message("completion editing is only available for leaf tasks")
+                return
+            if row.status == NOT_STARTED:
+                self._start_prompt("completion-start-confirm", "Start task? (Y/n)")
+                return
+            if row.status == COMPLETED:
+                self._start_prompt(
+                    "completion-remove-confirm",
+                    "REMOVE COMPLETION MARK? (y/N)",
+                )
+                return
+            self._start_completion_prompt()
+
         def action_insert_unsorted(self) -> None:
+            self._cancel_prompt()
             self._exit_edit_mode(commit=False)
             self._sync_selection_from_table_cursor()
             self.state.insert_unsorted_task()
@@ -109,6 +179,7 @@ def create_editor_app(document: Document) -> Any:
             self._start_description_edit()
 
         def action_insert_sorted(self) -> None:
+            self._cancel_prompt()
             self._exit_edit_mode(commit=False)
             self._sync_selection_from_table_cursor()
             self.state.insert_sorted_task()
@@ -116,6 +187,7 @@ def create_editor_app(document: Document) -> Any:
             self._start_description_edit()
 
         def action_cycle_status(self) -> None:
+            self._cancel_prompt()
             self._exit_edit_mode(commit=False)
             self._sync_selection_from_table_cursor()
             if self.state.cycle_selected_status():
@@ -123,6 +195,7 @@ def create_editor_app(document: Document) -> Any:
                 self._set_message("status updated")
 
         def action_toggle_hide_completed(self) -> None:
+            self._cancel_prompt()
             self._exit_edit_mode(commit=False)
             self._sync_selection_from_table_cursor()
             self.state.toggle_hide_completed()
@@ -134,6 +207,7 @@ def create_editor_app(document: Document) -> Any:
             )
 
         def action_save(self) -> None:
+            self._cancel_prompt()
             self._exit_edit_mode(commit=True)
             if self.document.path is None:
                 self._set_message("save path prompt is not implemented yet")
@@ -153,13 +227,19 @@ def create_editor_app(document: Document) -> Any:
 
         def on_input_submitted(self, event: Any) -> None:
             if event.input is self.edit_input:
-                self._exit_edit_mode(commit=True)
+                if self.prompt_kind is not None:
+                    self._submit_prompt()
+                else:
+                    self._exit_edit_mode(commit=True)
 
         def on_data_table_row_highlighted(self, event: Any) -> None:
             self._sync_selection_from_cursor_row(event.cursor_row)
 
         def key_escape(self) -> None:
-            self._exit_edit_mode(commit=False)
+            if self.prompt_kind is not None:
+                self._cancel_prompt()
+            else:
+                self._exit_edit_mode(commit=False)
 
         def _start_description_edit(self) -> None:
             row = self.state.selected_row
@@ -176,6 +256,90 @@ def create_editor_app(document: Document) -> Any:
             edit_input.focus()
             self.editing = True
             self._set_message("editing description")
+
+        def _start_prompt(
+            self,
+            kind: str,
+            message: str,
+            value: str = "",
+        ) -> None:
+            self.prompt_kind = kind
+            edit_input = self._edit_input()
+            edit_input.value = value
+            edit_input.styles.display = "block"
+            edit_input.focus()
+            self._set_message(message)
+
+        def _start_completion_prompt(
+            self,
+            *,
+            allow_start: bool = False,
+            allow_completed: bool = False,
+        ) -> None:
+            row = self.state.selected_row
+            value = "" if row is None or row.completion_text == "0%" else row.completion_text
+            self.completion_allow_start = allow_start
+            self.completion_allow_completed = allow_completed
+            self._start_prompt(
+                "completion",
+                "completion: enter 0, 50, 50.0, 50%, or empty to clear",
+                value,
+            )
+
+        def _submit_prompt(self) -> None:
+            edit_input = self._edit_input()
+            try:
+                if self.prompt_kind == "milestone":
+                    milestone = parse_milestone_prompt(edit_input.value)
+                    changed = self.state.update_selected_milestone(milestone)
+                    self._finish_prompt("milestone updated" if changed else "milestone unchanged")
+                elif self.prompt_kind == "priority":
+                    priority = parse_priority_prompt(edit_input.value)
+                    changed = self.state.update_selected_priority(priority)
+                    self._finish_prompt("priority updated" if changed else "priority unchanged")
+                elif self.prompt_kind == "completion-start-confirm":
+                    if parse_confirmation_prompt(edit_input.value, default=True):
+                        self._start_completion_prompt(allow_start=True)
+                    else:
+                        self._finish_prompt("completion edit cancelled")
+                elif self.prompt_kind == "completion-remove-confirm":
+                    if parse_confirmation_prompt(edit_input.value, default=False):
+                        self._start_completion_prompt(allow_completed=True)
+                    else:
+                        self._finish_prompt("completion edit cancelled")
+                elif self.prompt_kind == "completion":
+                    completion = parse_completion_prompt(edit_input.value)
+                    changed = self.state.update_selected_completion(
+                        completion,
+                        allow_start=self.completion_allow_start,
+                        allow_completed=self.completion_allow_completed,
+                    )
+                    self._finish_prompt("completion updated" if changed else "completion unchanged")
+            except ValueError as exc:
+                self._set_message(str(exc))
+
+        def _finish_prompt(self, message: str) -> None:
+            edit_input = self._edit_input()
+            edit_input.styles.display = "none"
+            edit_input.value = ""
+            self.prompt_kind = None
+            self.completion_allow_start = False
+            self.completion_allow_completed = False
+            self._refresh_table()
+            self._table().focus()
+            self._set_message(message)
+
+        def _cancel_prompt(self) -> None:
+            if self.prompt_kind is None:
+                return
+            edit_input = self._edit_input()
+            edit_input.styles.display = "none"
+            edit_input.value = ""
+            self.prompt_kind = None
+            self.completion_allow_start = False
+            self.completion_allow_completed = False
+            self._table().focus()
+            self._set_message("edit cancelled")
 
         def _exit_edit_mode(self, *, commit: bool) -> None:
             if not self.editing:

@@ -5,7 +5,7 @@ from typing import Any
 
 import pytest
 
-from roadmaps import COMPLETED, NOT_STARTED, Roadmap, Task, TaskGroup
+from roadmaps import COMPLETED, NOT_STARTED, ONGOING, Roadmap, Task, TaskGroup
 from roadmaps._documents import Document, load_document
 from roadmaps.editor import _top_bar_text, _tree_description, create_editor_app
 
@@ -164,6 +164,146 @@ def test_editor_description_edit_commit_and_cancel() -> None:
     assert app.message_bar.value == "edit cancelled"
 
 
+def test_editor_milestone_prompt_updates_selected_item() -> None:
+    app = create_editor_app(Document(Roadmap([Task("task")]), "text"))
+    _wire_fake_widgets(app)
+    app._refresh_table()
+
+    app.action_edit_milestone()
+    assert app.prompt_kind == "milestone"
+    assert app.edit_input.styles.display == "block"
+    assert app.message_bar.value == "milestone: enter N, (N), or empty to clear"
+
+    app.edit_input.value = "(3)"
+    app.on_input_submitted(SimpleNamespace(input=app.edit_input))
+
+    assert app.document.roadmap.steps[0].milestone == 3
+    assert app.state.dirty is True
+    assert app.prompt_kind is None
+    assert app.edit_input.styles.display == "none"
+    assert app.message_bar.value == "milestone updated"
+
+
+def test_editor_priority_prompt_sets_optional_and_clears_priority() -> None:
+    app = create_editor_app(Document(Roadmap([Task("task", priority=5)]), "text"))
+    _wire_fake_widgets(app)
+    app._refresh_table()
+
+    app.action_edit_priority()
+    app.edit_input.value = "?"
+    app.on_input_submitted(SimpleNamespace(input=app.edit_input))
+
+    assert app.document.roadmap.steps[0].optional is True
+    assert app.table.rows[0][2].plain == "?"
+
+    app.action_edit_priority()
+    app.edit_input.value = ""
+    app.on_input_submitted(SimpleNamespace(input=app.edit_input))
+
+    assert app.document.roadmap.steps[0].optional is False
+    assert app.document.roadmap.steps[0].priority == 0
+    assert app.message_bar.value == "priority updated"
+
+
+def test_editor_completion_prompt_starts_pending_task_by_default() -> None:
+    app = create_editor_app(Document(Roadmap([Task("task")]), "text"))
+    _wire_fake_widgets(app)
+    app._refresh_table()
+
+    app.action_edit_completion()
+    assert app.prompt_kind == "completion-start-confirm"
+    assert app.message_bar.value == "Start task? (Y/n)"
+
+    app.edit_input.value = ""
+    app.on_input_submitted(SimpleNamespace(input=app.edit_input))
+    assert app.prompt_kind == "completion"
+
+    app.edit_input.value = "75%"
+    app.on_input_submitted(SimpleNamespace(input=app.edit_input))
+
+    task = app.document.roadmap.steps[0]
+    assert isinstance(task, Task)
+    assert task.status == ONGOING
+    assert task.completion == 75.0
+    assert app.message_bar.value == "completion updated"
+
+
+def test_editor_completion_prompt_keeps_completed_task_by_default() -> None:
+    task = Task("done", status=COMPLETED)
+    app = create_editor_app(Document(Roadmap([task]), "text"))
+    _wire_fake_widgets(app)
+    app._refresh_table()
+
+    app.action_edit_completion()
+    assert app.prompt_kind == "completion-remove-confirm"
+    assert app.message_bar.value == "REMOVE COMPLETION MARK? (y/N)"
+
+    app.edit_input.value = ""
+    app.on_input_submitted(SimpleNamespace(input=app.edit_input))
+
+    assert task.status == COMPLETED
+    assert app.prompt_kind is None
+    assert app.message_bar.value == "completion edit cancelled"
+
+
+def test_editor_completion_prompt_can_remove_completed_mark() -> None:
+    task = Task("done", status=COMPLETED)
+    app = create_editor_app(Document(Roadmap([task]), "text"))
+    _wire_fake_widgets(app)
+    app._refresh_table()
+
+    app.action_edit_completion()
+    app.edit_input.value = "YES"
+    app.on_input_submitted(SimpleNamespace(input=app.edit_input))
+    assert app.prompt_kind == "completion"
+
+    app.edit_input.value = ""
+    app.on_input_submitted(SimpleNamespace(input=app.edit_input))
+
+    assert task.status == ONGOING
+    assert task.completion == 0.0
+    assert app.message_bar.value == "completion updated"
+
+
+def test_editor_metadata_prompts_reject_completed_rows_and_groups() -> None:
+    app = create_editor_app(
+        Document(
+            Roadmap(
+                [
+                    Task("done", status=COMPLETED),
+                    TaskGroup("group", tasks=[Task("child")]),
+                ]
+            ),
+            "text",
+        )
+    )
+    _wire_fake_widgets(app)
+    app._refresh_table()
+
+    app.action_edit_milestone()
+    assert app.message_bar.value == "completed rows are read-only"
+    app.action_edit_priority()
+    assert app.message_bar.value == "completed rows are read-only"
+
+    app.action_cursor_down()
+    app.action_edit_completion()
+    assert app.message_bar.value == "completion editing is only available for leaf tasks"
+
+
+def test_editor_invalid_prompt_input_stays_open() -> None:
+    app = create_editor_app(Document(Roadmap([Task("task")]), "text"))
+    _wire_fake_widgets(app)
+    app._refresh_table()
+
+    app.action_edit_priority()
+    app.edit_input.value = "high"
+    app.on_input_submitted(SimpleNamespace(input=app.edit_input))
+
+    assert app.prompt_kind == "priority"
+    assert app.edit_input.styles.display == "block"
+    assert "priority" in app.message_bar.value
+
+
 def test_editor_rejects_completed_description_edit() -> None:
     app = create_editor_app(Document(Roadmap([Task("done", status=COMPLETED)]), "text"))
     _wire_fake_widgets(app)
@@ -278,12 +418,17 @@ def test_textual_pilot_drives_editor_keybindings(tmp_path: Path) -> None:
             assert app.editing is False
             assert document.roadmap.steps[1].description == "inserted"
 
+            await pilot.press("ctrl+m")
+            app.edit_input.value = "2"
+            await pilot.press("enter")
+            assert document.roadmap.steps[1].milestone == 2
+
             await pilot.press("ctrl+s")
             assert app.state.dirty is False
 
     asyncio.run(run_pilot())
     assert path.read_text().splitlines() == [
         "- [~] first",
-        "- [ ] inserted",
+        "- [ ] (2) inserted",
         "- [x] done",
     ]

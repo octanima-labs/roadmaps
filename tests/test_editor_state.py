@@ -1,7 +1,22 @@
 import pytest
 
-from roadmaps import COMPLETED, MAX_PRIORITY, NOT_STARTED, ONGOING, UNSORTED
-from roadmaps._editor_state import NEW_TASK_DESCRIPTION, EditorState
+from roadmaps import (
+    COMPLETED,
+    DEFAULT_PRIORITY,
+    MAX_PRIORITY,
+    NOT_STARTED,
+    ONGOING,
+    OPTIONAL_TASK,
+    UNSORTED,
+)
+from roadmaps._editor_state import (
+    NEW_TASK_DESCRIPTION,
+    EditorState,
+    parse_completion_prompt,
+    parse_confirmation_prompt,
+    parse_milestone_prompt,
+    parse_priority_prompt,
+)
 from roadmaps.model import Roadmap, Task, TaskGroup
 
 
@@ -264,3 +279,91 @@ def test_cycle_status_without_selection_is_noop() -> None:
 
     assert state.cycle_selected_status() is False
     assert state.dirty is False
+
+
+def test_parse_metadata_prompts_accept_friendly_forms() -> None:
+    assert parse_milestone_prompt("") == 0
+    assert parse_milestone_prompt("(12)") == 12
+    assert parse_priority_prompt("") == DEFAULT_PRIORITY
+    assert parse_priority_prompt("!") == MAX_PRIORITY
+    assert parse_priority_prompt("?") == OPTIONAL_TASK
+    assert parse_priority_prompt("^42") == 42
+    assert parse_priority_prompt("42") == 42
+    assert parse_completion_prompt("") == 0.0
+    assert parse_completion_prompt("50") == 50.0
+    assert parse_completion_prompt("50.0") == 50.0
+    assert parse_completion_prompt("50%") == 50.0
+    assert parse_confirmation_prompt("", default=True) is True
+    assert parse_confirmation_prompt("", default=False) is False
+    assert parse_confirmation_prompt("YES", default=False) is True
+    assert parse_confirmation_prompt("n", default=True) is False
+
+
+def test_parse_metadata_prompts_reject_invalid_values() -> None:
+    with pytest.raises(ValueError, match="milestone"):
+        parse_milestone_prompt("one")
+    with pytest.raises(ValueError, match="priority"):
+        parse_priority_prompt("high")
+    with pytest.raises(ValueError, match="completion"):
+        parse_completion_prompt("100")
+    with pytest.raises(ValueError, match="yes or no"):
+        parse_confirmation_prompt("maybe", default=True)
+
+
+def test_update_selected_milestone_and_priority_for_tasks_and_groups() -> None:
+    group = TaskGroup("group", tasks=[Task("child")])
+    state = EditorState(Roadmap([group, Task("task")]))
+
+    assert state.update_selected_milestone(3) is True
+    assert group.milestone == 3
+    assert state.update_selected_priority(MAX_PRIORITY) is True
+    assert group.priority == MAX_PRIORITY
+
+    state.select_path((1,))
+    assert state.update_selected_priority(OPTIONAL_TASK) is True
+    assert state.roadmap.steps[1].optional is True
+    assert state.roadmap.steps[1].priority == OPTIONAL_TASK
+    assert state.update_selected_priority(DEFAULT_PRIORITY) is True
+    assert state.roadmap.steps[1].optional is False
+    assert state.roadmap.steps[1].priority == DEFAULT_PRIORITY
+
+
+def test_update_selected_metadata_marks_dirty_only_on_change() -> None:
+    state = EditorState(Roadmap([Task("task", milestone=2, priority=5)]))
+
+    assert state.update_selected_milestone(2) is False
+    assert state.update_selected_priority(5) is False
+    assert state.dirty is False
+
+
+def test_update_selected_metadata_rejects_completed_rows() -> None:
+    state = EditorState(Roadmap([Task("done", status=COMPLETED)]))
+
+    with pytest.raises(ValueError, match="completed rows"):
+        state.update_selected_milestone(1)
+    with pytest.raises(ValueError, match="completed rows"):
+        state.update_selected_priority(1)
+
+
+def test_update_selected_completion_requires_leaf_and_confirmation_flags() -> None:
+    state = EditorState(Roadmap([TaskGroup("group", tasks=[Task("child")])]))
+
+    with pytest.raises(TypeError, match="leaf tasks"):
+        state.update_selected_completion(50.0)
+
+    pending = Task("pending")
+    done = Task("done", status=COMPLETED)
+    state = EditorState(Roadmap([pending, done]))
+
+    with pytest.raises(ValueError, match="started"):
+        state.update_selected_completion(50.0)
+    assert state.update_selected_completion(50.0, allow_start=True) is True
+    assert pending.status == ONGOING
+    assert pending.completion == 50.0
+
+    state.select_path((1,))
+    with pytest.raises(ValueError, match="completed rows"):
+        state.update_selected_completion(50.0)
+    assert state.update_selected_completion(0.0, allow_completed=True) is True
+    assert done.status == ONGOING
+    assert done.completion == 0.0

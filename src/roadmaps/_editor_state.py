@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 
-from roadmaps._validation import _validate_description
+from roadmaps._validation import _validate_description, _validated_task_completion
 from roadmaps.constants import (
     COMPLETED,
+    DEFAULT_PRIORITY,
     MAX_PRIORITY,
     NO_MILESTONE,
     NOT_STARTED,
@@ -126,6 +128,63 @@ class EditorState:
         self.dirty = True
         return True
 
+    def update_selected_milestone(self, milestone: int) -> bool:
+        row = self._editable_selected_row()
+        if row is None:
+            return False
+        if milestone < NO_MILESTONE:
+            msg = "milestone must be a non-negative integer"
+            raise ValueError(msg)
+        if row.item.milestone == milestone:
+            return False
+        row.item.milestone = milestone
+        self.dirty = True
+        return True
+
+    def update_selected_priority(self, priority: int) -> bool:
+        row = self._editable_selected_row()
+        if row is None:
+            return False
+
+        before = (row.item.priority, row.item.optional)
+        if priority == OPTIONAL_TASK:
+            row.item.set_optional(True)
+        else:
+            row.item.set_optional(False)
+            row.item.set_priority(priority)
+        if (row.item.priority, row.item.optional) == before:
+            return False
+        self.dirty = True
+        return True
+
+    def update_selected_completion(
+        self,
+        completion: float,
+        *,
+        allow_start: bool = False,
+        allow_completed: bool = False,
+    ) -> bool:
+        row = self.selected_row
+        if row is None:
+            return False
+        if isinstance(row.item, TaskGroup):
+            msg = "completion editing is only available for leaf tasks"
+            raise TypeError(msg)
+        if row.status == COMPLETED and not allow_completed:
+            msg = "completed rows are read-only except status cycling"
+            raise ValueError(msg)
+        if row.status == NOT_STARTED and not allow_start:
+            msg = "not-started tasks must be started before setting completion"
+            raise ValueError(msg)
+
+        before = self.roadmap.to_dict()
+        row.item.mark_ongoing(completion=completion)
+        if self.roadmap.to_dict() == before:
+            return False
+        self.dirty = True
+        self.repair_selection()
+        return True
+
     def cycle_selected_status(self) -> bool:
         row = self.selected_row
         if row is None:
@@ -163,6 +222,15 @@ class EditorState:
             self.selected_path = rows[previous_index].path
             return
         self.selected_path = rows[-1].path
+
+    def _editable_selected_row(self) -> EditorRow | None:
+        row = self.selected_row
+        if row is None:
+            return None
+        if row.completed:
+            msg = "completed rows are read-only except status cycling"
+            raise ValueError(msg)
+        return row
 
     def _insertion_location(self) -> tuple[list[Task | TaskGroup], int]:
         if self.selected_path is None:
@@ -218,6 +286,63 @@ def _priority_text(item: Task | TaskGroup) -> str:
     if item.priority > 0:
         return f"^{item.priority}"
     return ""
+
+
+def parse_milestone_prompt(value: str) -> int:
+    text = value.strip()
+    if not text:
+        return NO_MILESTONE
+
+    parenthesized = re.fullmatch(r"\(\s*(\d+)\s*\)", text)
+    if parenthesized is not None:
+        text = parenthesized.group(1)
+
+    if not re.fullmatch(r"\d+", text):
+        msg = "milestone must be a non-negative integer"
+        raise ValueError(msg)
+    return int(text)
+
+
+def parse_priority_prompt(value: str) -> int:
+    text = value.strip()
+    if not text:
+        return DEFAULT_PRIORITY
+    if text == "!":
+        return MAX_PRIORITY
+    if text == "?":
+        return OPTIONAL_TASK
+    if text.startswith("^"):
+        text = text[1:].strip()
+    if not re.fullmatch(r"\d+", text):
+        msg = "priority must be !, ?, ^N, N, or empty"
+        raise ValueError(msg)
+    return int(text)
+
+
+def parse_completion_prompt(value: str) -> float:
+    text = value.strip()
+    if not text:
+        return 0.0
+    if text.endswith("%"):
+        text = text[:-1].strip()
+    try:
+        completion = float(text)
+    except ValueError as exc:
+        msg = "completion must be a number from 0.0 through 99.0"
+        raise ValueError(msg) from exc
+    return _validated_task_completion(completion, ONGOING, "completion", ValueError)
+
+
+def parse_confirmation_prompt(value: str, *, default: bool) -> bool:
+    text = value.strip().casefold()
+    if not text:
+        return default
+    if text in {"y", "yes"}:
+        return True
+    if text in {"n", "no"}:
+        return False
+    msg = "answer must be yes or no"
+    raise ValueError(msg)
 
 
 def _siblings_for_path(roadmap: Roadmap, path: Path) -> tuple[list[Task | TaskGroup], int]:
