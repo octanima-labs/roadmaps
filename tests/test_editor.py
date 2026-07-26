@@ -7,7 +7,12 @@ import pytest
 
 from roadmaps import COMPLETED, NOT_STARTED, ONGOING, Roadmap, Task, TaskGroup
 from roadmaps._documents import Document, load_document
-from roadmaps.editor import _top_bar_text, _tree_description, create_editor_app
+from roadmaps.editor import (
+    _top_bar_text,
+    _tree_description,
+    _tree_descriptions,
+    create_editor_app,
+)
 
 
 class FakeTable:
@@ -81,13 +86,54 @@ def test_top_bar_shows_path_format_and_dirty_marker() -> None:
     assert _top_bar_text(app.document, app.state) == "<UNNAMED> [yaml] *"
 
 
-def test_tree_description_uses_depth_prefix() -> None:
+def test_tree_description_uses_visible_tree_guides() -> None:
     app = create_editor_app(
-        Document(Roadmap([TaskGroup("group", tasks=[Task("child")])]), "text")
+        Document(
+            Roadmap(
+                [
+                    TaskGroup(
+                        "first",
+                        tasks=[
+                            Task("first child"),
+                            TaskGroup("second child", tasks=[Task("grandchild")]),
+                        ],
+                    ),
+                    TaskGroup("second", tasks=[Task("last child")]),
+                ]
+            ),
+            "text",
+        )
     )
+    descriptions = _tree_descriptions(app.state.rows)
 
-    assert _tree_description(app.state.rows[0]) == "group"
-    assert _tree_description(app.state.rows[1]) == "└─ child"
+    assert _tree_description(app.state.rows[0]) == "first"
+    assert descriptions[(0,)] == "first"
+    assert descriptions[(0, 0)] == "│  ├─ first child"
+    assert descriptions[(0, 1)] == "│  └─ second child"
+    assert descriptions[(0, 1, 0)] == "│     └─ grandchild"
+    assert descriptions[(1, 0)] == "└─ last child"
+
+
+def test_tree_description_ignores_hidden_completed_rows() -> None:
+    app = create_editor_app(
+        Document(
+            Roadmap(
+                [
+                    TaskGroup(
+                        "group",
+                        tasks=[
+                            Task("visible"),
+                            Task("done", status=COMPLETED),
+                        ],
+                    )
+                ]
+            ),
+            "text",
+        )
+    )
+    app.state.hide_completed = True
+
+    assert _tree_descriptions(app.state.rows)[(0, 0)] == "└─ visible"
 
 
 def test_editor_actions_move_selection_and_toggle_completed_visibility() -> None:
@@ -476,6 +522,44 @@ def test_editor_move_row_actions_refresh_selection_and_show_messages() -> None:
     assert app.message_bar.value == "row moved"
 
 
+def test_editor_indent_outdent_actions_refresh_selection_and_show_messages() -> None:
+    app = create_editor_app(Document(Roadmap([Task("parent"), Task("child")]), "text"))
+    _wire_fake_widgets(app)
+    app._refresh_table()
+    app.action_cursor_down()
+
+    app.action_indent_row()
+
+    group = app.document.roadmap.steps[0]
+    assert isinstance(group, TaskGroup)
+    assert [task.description for task in group.tasks] == ["child"]
+    assert app.state.selected_path == (0, 0)
+    assert app.table.cursor_row == 1
+    assert app.message_bar.value == "row indented"
+
+    app.action_outdent_row()
+    assert [step.description for step in app.document.roadmap.steps] == [
+        "parent",
+        "child",
+    ]
+    assert app.state.selected_path == (1,)
+    assert app.message_bar.value == "row outdented"
+
+    app.action_outdent_row()
+    assert app.message_bar.value == "already at top level"
+
+
+def test_editor_indent_first_visible_row_is_noop() -> None:
+    app = create_editor_app(Document(Roadmap([Task("first"), Task("second")]), "text"))
+    _wire_fake_widgets(app)
+    app._refresh_table()
+
+    app.action_indent_row()
+
+    assert [step.description for step in app.document.roadmap.steps] == ["first", "second"]
+    assert app.message_bar.value == "cannot indent row"
+
+
 def test_editor_highlight_event_updates_internal_selection() -> None:
     app = create_editor_app(Document(Roadmap([Task("first"), Task("second")]), "text"))
     _wire_fake_widgets(app)
@@ -564,12 +648,17 @@ def test_textual_pilot_drives_editor_keybindings(tmp_path: Path) -> None:
             await pilot.press("ctrl+k")
             assert document.roadmap.steps[0].description == "inserted"
 
+            await pilot.press("ctrl+j")
+            await pilot.press(">")
+            assert isinstance(document.roadmap.steps[0], TaskGroup)
+            assert document.roadmap.steps[0].tasks[0].description == "inserted"
+
             await pilot.press("ctrl+s")
             assert app.state.dirty is False
 
     asyncio.run(run_pilot())
     assert path.read_text().splitlines() == [
-        "- [~1.0%] (2) inserted",
         "- [~] first",
+        "  - [~1.0%] (2) inserted",
         "- [x] done",
     ]

@@ -66,6 +66,8 @@ def create_editor_app(document: Document) -> Any:
             ("[", "decrease_completion_large", "Completion -10"),
             ("ctrl+k", "move_row_up", "Move row up"),
             ("ctrl+j", "move_row_down", "Move row down"),
+            (">", "indent_row", "Indent row"),
+            ("<", "outdent_row", "Outdent row"),
             ("ctrl+u", "insert_unsorted", "New unsorted"),
             ("ctrl+o", "insert_sorted", "New sorted"),
             ("ctrl+space", "cycle_status", "Cycle status"),
@@ -214,6 +216,32 @@ def create_editor_app(document: Document) -> Any:
                 self._set_message("row moved")
             else:
                 self._set_message("already at bottom")
+
+        def action_indent_row(self) -> None:
+            if self.prompt_kind is not None or self.editing:
+                return
+            self._sync_selection_from_table_cursor()
+            if self.state.selected_row is None:
+                self._set_message("no row selected")
+                return
+            if self.state.indent_selected_row():
+                self._refresh_table()
+                self._set_message("row indented")
+            else:
+                self._set_message("cannot indent row")
+
+        def action_outdent_row(self) -> None:
+            if self.prompt_kind is not None or self.editing:
+                return
+            self._sync_selection_from_table_cursor()
+            if self.state.selected_row is None:
+                self._set_message("no row selected")
+                return
+            if self.state.outdent_selected_row():
+                self._refresh_table()
+                self._set_message("row outdented")
+            else:
+                self._set_message("already at top level")
 
         def action_insert_unsorted(self) -> None:
             self._cancel_prompt()
@@ -542,13 +570,15 @@ def _top_bar_text(document: Document, state: EditorState) -> str:
 def _populate_table(table: Any, state: EditorState, text: Any) -> None:
     table.clear(columns=True)
     table.add_columns("Order", "Completion", "Priority", "Milestone", "Description")
-    for row in state.rows:
+    rows = state.rows
+    descriptions = _tree_descriptions(rows)
+    for row in rows:
         table.add_row(
             _styled_text(row.order_text, row, text),
             _styled_text(row.completion_text, row, text),
             _styled_text(row.priority_text, row, text),
             _styled_text(row.milestone_text, row, text),
-            _styled_text(_tree_description(row), row, text),
+            _styled_text(descriptions[row.path], row, text),
             key=str(row.path),
         )
 
@@ -562,8 +592,52 @@ def _styled_text(value: str, row: EditorRow, text: Any) -> Any:
     return text(value, style=style)
 
 
-def _tree_description(row: EditorRow) -> str:
+def _tree_description(row: EditorRow, rows: list[EditorRow] | None = None) -> str:
+    if rows is None:
+        if row.depth == 0:
+            return row.description
+        guide = "  " * (row.depth - 1)
+        return f"{guide}└─ {row.description}"
+    return _tree_descriptions(rows)[row.path]
+
+
+def _tree_descriptions(rows: list[EditorRow]) -> dict[tuple[int, ...], str]:
+    sibling_indexes = _visible_sibling_indexes(rows)
+    return {row.path: _tree_description_for_row(row, sibling_indexes) for row in rows}
+
+
+def _tree_description_for_row(
+    row: EditorRow,
+    sibling_indexes: dict[tuple[int, ...], list[int]],
+) -> str:
     if row.depth == 0:
         return row.description
-    guide = "  " * (row.depth - 1)
-    return f"{guide}└─ {row.description}"
+
+    prefix = ""
+    for depth in range(row.depth):
+        ancestor_parent = row.path[:depth]
+        ancestor_index = row.path[depth]
+        if _has_later_sibling(sibling_indexes, ancestor_parent, ancestor_index):
+            prefix += "│  "
+        elif depth > 0:
+            prefix += "   "
+
+    parent_path = row.path[:-1]
+    branch = "├─ " if _has_later_sibling(sibling_indexes, parent_path, row.path[-1]) else "└─ "
+    return f"{prefix}{branch}{row.description}"
+
+
+def _visible_sibling_indexes(rows: list[EditorRow]) -> dict[tuple[int, ...], list[int]]:
+    indexes: dict[tuple[int, ...], list[int]] = {}
+    for row in rows:
+        indexes.setdefault(row.path[:-1], []).append(row.path[-1])
+    return indexes
+
+
+def _has_later_sibling(
+    sibling_indexes: dict[tuple[int, ...], list[int]],
+    parent_path: tuple[int, ...],
+    index: int,
+) -> bool:
+    siblings = sibling_indexes.get(parent_path, [])
+    return bool(siblings and index < siblings[-1])

@@ -535,3 +535,133 @@ def test_move_selected_row_respects_visible_rows_when_completed_are_hidden() -> 
     ]
     assert [row.description for row in state.rows] == ["second", "first"]
     assert state.selected_path == (0,)
+
+
+def test_indent_selected_row_converts_previous_leaf_to_group_and_inherits_milestone() -> None:
+    parent = Task("parent", order=1, milestone=2)
+    child = Task("child", order=2)
+    state = EditorState(Roadmap([parent, child, Task("loose")]))
+    state.select_path((1,))
+
+    assert state.indent_selected_row() is True
+
+    group = state.roadmap.steps[0]
+    assert isinstance(group, TaskGroup)
+    assert group.description == "parent"
+    assert group.milestone == 2
+    assert group.tasks == [child]
+    assert child.milestone == 2
+    assert [step.description for step in state.roadmap.steps] == ["parent", "loose"]
+    assert [step.order for step in state.roadmap.steps] == [1, UNSORTED]
+    assert state.selected_path == (0, 0)
+    assert state.dirty is True
+
+
+def test_indent_selected_row_appends_to_existing_group_and_preserves_milestone() -> None:
+    group = TaskGroup("group", tasks=[Task("existing")], milestone=3)
+    child = Task("child", milestone=5)
+    state = EditorState(Roadmap([group, child]))
+    state.select_path((1,))
+
+    assert state.indent_selected_row() is True
+
+    assert group.tasks == [Task("existing"), child]
+    assert child.milestone == 5
+    assert state.selected_path == (0, 1)
+
+
+def test_indent_selected_row_first_visible_sibling_is_noop() -> None:
+    state = EditorState(Roadmap([Task("first"), Task("second")]))
+
+    assert state.indent_selected_row() is False
+    assert [step.description for step in state.roadmap.steps] == ["first", "second"]
+    assert state.dirty is False
+
+
+def test_outdent_selected_row_moves_after_parent_and_converts_empty_parent() -> None:
+    child = Task("child", order=1)
+    group = TaskGroup("group", order=1, tasks=[child])
+    state = EditorState(Roadmap([Task("before", order=1), group]))
+    state.select_path((1, 0))
+
+    assert state.outdent_selected_row() is True
+
+    assert [step.description for step in state.roadmap.steps] == ["before", "group", "child"]
+    assert isinstance(state.roadmap.steps[1], Task)
+    assert not isinstance(state.roadmap.steps[1], TaskGroup)
+    assert [step.order for step in state.roadmap.steps] == [1, 2, 3]
+    assert state.selected_path == (2,)
+
+
+def test_outdent_selected_row_top_level_is_noop() -> None:
+    state = EditorState(Roadmap([Task("top")]))
+
+    assert state.outdent_selected_row() is False
+    assert state.dirty is False
+
+
+def test_indent_and_outdent_move_groups_as_subtrees() -> None:
+    parent = Task("parent")
+    group = TaskGroup("group", tasks=[Task("child")])
+    state = EditorState(Roadmap([parent, group]))
+    state.select_path((1,))
+
+    assert state.indent_selected_row() is True
+    new_parent = state.roadmap.steps[0]
+    assert isinstance(new_parent, TaskGroup)
+    assert new_parent.tasks == [group]
+    assert group.tasks == [Task("child")]
+
+    assert state.outdent_selected_row() is True
+    assert [step.description for step in state.roadmap.steps] == ["parent", "group"]
+    assert group.tasks == [Task("child")]
+
+
+def test_indent_and_outdent_allow_completed_rows() -> None:
+    parent = Task("parent")
+    done = Task("done", status=COMPLETED)
+    state = EditorState(Roadmap([parent, done]))
+    state.select_path((1,))
+
+    assert state.indent_selected_row() is True
+    group = state.roadmap.steps[0]
+    assert isinstance(group, TaskGroup)
+    assert group.tasks == [done]
+
+    assert state.outdent_selected_row() is True
+    assert state.roadmap.steps == [Task("parent"), done]
+
+
+def test_indent_selected_row_uses_previous_visible_sibling_when_completed_hidden() -> None:
+    first = Task("first")
+    done = Task("done", status=COMPLETED)
+    second = Task("second")
+    state = EditorState(Roadmap([first, done, second]), hide_completed=True)
+    state.select_path((2,))
+
+    assert state.indent_selected_row() is True
+
+    group = state.roadmap.steps[0]
+    assert isinstance(group, TaskGroup)
+    assert group.tasks == [second]
+    assert state.roadmap.steps[1] is done
+    assert state.selected_path == (0, 0)
+
+
+def test_indent_outdent_renumber_sorted_only() -> None:
+    state = EditorState(
+        Roadmap(
+            [
+                Task("parent", order=1),
+                Task("child", order=2),
+                Task("loose"),
+            ]
+        )
+    )
+    state.select_path((1,))
+
+    assert state.indent_selected_row() is True
+
+    assert [step.order for step in state.roadmap.steps] == [1, UNSORTED]
+    state.outdent_selected_row()
+    assert [step.order for step in state.roadmap.steps] == [1, 2, UNSORTED]

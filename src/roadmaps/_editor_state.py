@@ -305,6 +305,56 @@ class EditorState:
         self._finish_row_move(item)
         return True
 
+    def indent_selected_row(self) -> bool:
+        row = self.selected_row
+        if row is None:
+            return False
+
+        siblings, index = _siblings_for_path(self.roadmap, row.path)
+        visible_indices = _visible_sibling_indices(siblings, self.hide_completed)
+        visible_position = visible_indices.index(index)
+        if visible_position == 0:
+            return False
+
+        parent_index = visible_indices[visible_position - 1]
+        parent = siblings[parent_index]
+        if isinstance(parent, TaskGroup):
+            group = parent
+        else:
+            group = parent.to_group()
+            siblings[parent_index] = group
+
+        item = siblings.pop(index)
+        if item.milestone == NO_MILESTONE and group.milestone != NO_MILESTONE:
+            item.milestone = group.milestone
+        group.tasks.append(item)
+        _renumber_sorted_siblings(siblings)
+        _renumber_sorted_siblings(group.tasks)
+        self._finish_row_move(item)
+        return True
+
+    def outdent_selected_row(self) -> bool:
+        row = self.selected_row
+        if row is None or len(row.path) == 1:
+            return False
+
+        siblings, index = _siblings_for_path(self.roadmap, row.path)
+        parent_path = row.path[:-1]
+        parent_siblings, parent_index = _siblings_for_path(self.roadmap, parent_path)
+        parent = parent_siblings[parent_index]
+        if not isinstance(parent, TaskGroup):  # pragma: no cover - paths are generated from groups.
+            msg = "parent row is not a task group"
+            raise TypeError(msg)
+
+        item = siblings.pop(index)
+        if not siblings:
+            parent_siblings[parent_index] = parent.to_task()
+        parent_siblings.insert(parent_index + 1, item)
+        _renumber_sorted_siblings(siblings)
+        _renumber_sorted_siblings(parent_siblings)
+        self._finish_row_move(item)
+        return True
+
     def cycle_selected_status(self) -> bool:
         row = self.selected_row
         if row is None:
