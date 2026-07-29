@@ -307,6 +307,17 @@ def test_update_selected_description_marks_dirty_only_on_change() -> None:
     assert state.dirty is True
 
 
+@pytest.mark.parametrize("description", ["", "   ", "\n\t"])
+def test_update_selected_description_rejects_blank_input(description: str) -> None:
+    state = EditorState(Roadmap([Task("old")]))
+
+    with pytest.raises(ValueError, match="non-empty string"):
+        state.update_selected_description(description)
+
+    assert state.roadmap.steps[0].description == "old"
+    assert state.dirty is False
+
+
 def test_update_selected_description_without_selection_is_noop() -> None:
     state = EditorState(Roadmap())
 

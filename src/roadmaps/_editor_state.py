@@ -193,6 +193,9 @@ class EditorState:
         if row.completed:
             msg = "completed rows are read-only except status cycling"
             raise ValueError(msg)
+        if not isinstance(description, str) or not description.strip():
+            msg = "description must be a non-empty string"
+            raise ValueError(msg)
 
         _validate_description(description, "description", ValueError)
         if row.item.description == description:

@@ -315,6 +315,22 @@ def test_editor_description_edit_commit_and_cancel() -> None:
     assert app.message_bar.value == "edit cancelled"
 
 
+def test_editor_description_edit_rejects_blank_input() -> None:
+    app = create_editor_app(Document(Roadmap([Task("first")]), "text"))
+    _wire_fake_widgets(app)
+    app._refresh_table()
+
+    app.action_edit_description()
+    app.edit_input.value = "   "
+    app._exit_edit_mode(commit=True)
+
+    assert app.document.roadmap.steps[0].description == "first"
+    assert app.state.dirty is False
+    assert app.editing is True
+    assert app.edit_input.styles.display == "block"
+    assert app.message_bar.value == "description must be a non-empty string"
+
+
 @pytest.mark.parametrize(
     ("meta", "expected"),
     [
