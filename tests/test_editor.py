@@ -13,6 +13,7 @@ from roadmaps import (
     NOT_STARTED,
     ONGOING,
     OPTIONAL_TASK,
+    UNSORTED,
     Roadmap,
     Task,
     TaskGroup,
@@ -291,6 +292,40 @@ def test_editor_insert_uses_visual_table_cursor_when_state_is_stale() -> None:
         "New task",
     ]
     assert app.state.selected_path == (2,)
+
+
+def test_editor_insert_subtask_enters_description_edit_mode() -> None:
+    app = create_editor_app(Document(Roadmap([Task("parent")]), "text"))
+    _wire_fake_widgets(app)
+    app._refresh_table()
+
+    app.action_insert_sorted_subtask()
+
+    group = app.document.roadmap.steps[0]
+    assert isinstance(group, TaskGroup)
+    assert [task.description for task in group.tasks] == ["New task"]
+    assert [task.order for task in group.tasks] == [1]
+    assert app.state.selected_path == (0, 0)
+    assert app.editing is True
+    assert app.edit_input.value == "New task"
+    assert app.edit_input.styles.display == "block"
+
+
+def test_editor_insert_subtask_uses_visual_table_cursor_when_state_is_stale() -> None:
+    group = TaskGroup("second", tasks=[Task("child")])
+    app = create_editor_app(Document(Roadmap([Task("first"), group]), "text"))
+    _wire_fake_widgets(app)
+    app._refresh_table()
+    app.table.cursor_row = 1
+    app.state.selected_path = (0,)
+
+    app.action_insert_unsorted_subtask()
+
+    assert isinstance(app.document.roadmap.steps[0], Task)
+    assert [task.description for task in group.tasks] == ["child", "New task"]
+    assert [task.order for task in group.tasks] == [UNSORTED, UNSORTED]
+    assert app.state.selected_path == (1, 1)
+    assert app.editing is True
 
 
 def test_editor_description_edit_commit_and_cancel() -> None:
@@ -1157,6 +1192,24 @@ def test_textual_pilot_drives_remaining_shortcuts() -> None:
     asyncio.run(run_pilot())
 
 
+def test_textual_pilot_drives_alt_subtask_keybinding() -> None:
+    pytest.importorskip("textual")
+    document = Document(Roadmap([Task("parent")]), "text")
+    app = create_editor_app(document)
+
+    async def run_pilot() -> None:
+        async with app.run_test() as pilot:
+            await pilot.press("ctrl+o")
+
+            group = document.roadmap.steps[0]
+            assert isinstance(group, TaskGroup)
+            assert [(task.description, task.order) for task in group.tasks] == [("New task", 1)]
+            assert app.state.selected_path == (0, 0)
+            assert app.editing is True
+
+    asyncio.run(run_pilot())
+
+
 def test_textual_pilot_drives_editor_keybindings(tmp_path: Path) -> None:
     pytest.importorskip("textual")
     path = tmp_path / "roadmap.roadmap"
@@ -1179,7 +1232,7 @@ def test_textual_pilot_drives_editor_keybindings(tmp_path: Path) -> None:
             await pilot.press("ctrl+space")
             assert document.roadmap.steps[0].status != NOT_STARTED
 
-            await pilot.press("ctrl+u")
+            await pilot.press("o")
             assert app.editing is True
             assert app.state.selected_path == (1,)
 

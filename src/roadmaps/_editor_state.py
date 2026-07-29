@@ -186,6 +186,35 @@ class EditorState:
         self.dirty = True
         return task
 
+    def insert_unsorted_subtask(self, description: str = NEW_TASK_DESCRIPTION) -> Task | None:
+        group = self._selected_item_as_group()
+        if group is None:
+            return None
+
+        task = Task(description, order=UNSORTED, milestone=group.milestone)
+        group.tasks.append(task)
+        self.collapsed_item_ids.discard(id(group))
+        self.selected_path = _path_for_item(self.roadmap.steps, task)
+        self.clear_row_marks()
+        self.dirty = True
+        self.repair_selection()
+        return task
+
+    def insert_sorted_subtask(self, description: str = NEW_TASK_DESCRIPTION) -> Task | None:
+        group = self._selected_item_as_group()
+        if group is None:
+            return None
+
+        task = Task(description, order=1, milestone=group.milestone)
+        group.tasks.append(task)
+        _renumber_sorted_siblings(group.tasks)
+        self.collapsed_item_ids.discard(id(group))
+        self.selected_path = _path_for_item(self.roadmap.steps, task)
+        self.clear_row_marks()
+        self.dirty = True
+        self.repair_selection()
+        return task
+
     def update_selected_description(self, description: str) -> bool:
         row = self.selected_row
         if row is None:
@@ -661,6 +690,19 @@ class EditorState:
         if self.selected_path is None:
             return (index,)
         return (*self.selected_path[:-1], index)
+
+    def _selected_item_as_group(self) -> TaskGroup | None:
+        row = self.selected_row
+        if row is None:
+            return None
+        if isinstance(row.item, TaskGroup):
+            return row.item
+
+        siblings, index = _siblings_for_path(self.roadmap, row.path)
+        group = row.item.to_group()
+        siblings[index] = group
+        self.selected_path = _path_for_item(self.roadmap.steps, group)
+        return group
 
 
 def _flatten_rows(

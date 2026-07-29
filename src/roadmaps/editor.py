@@ -104,8 +104,10 @@ def create_editor_app(document: Document) -> Any:
             ("ctrl+g", "group_rows", "Group rows"),
             ("ctrl+t", "toggle_group_collapsed", "Toggle group"),
             ("ctrl+shift+t", "toggle_all_group_collapsed", "Toggle all groups"),
-            ("ctrl+u", "insert_unsorted", "New unsorted"),
-            ("ctrl+o", "insert_sorted", "New sorted"),
+            ("o", "insert_unsorted", "New unsorted"),
+            ("u", "insert_sorted", "New sorted"),
+            ("ctrl+u", "insert_unsorted_subtask", "New unsorted subtask"),
+            ("ctrl+o", "insert_sorted_subtask", "New sorted subtask"),
             ("ctrl+space", "cycle_status", "Cycle status"),
             ("ctrl+h", "toggle_hide_completed", "Hide completed"),
             ("ctrl+s", "save", "Save"),
@@ -370,6 +372,26 @@ def create_editor_app(document: Document) -> Any:
             self._exit_edit_mode(commit=False)
             self._sync_selection_from_table_cursor()
             self.state.insert_sorted_task()
+            self._refresh_table()
+            self._start_description_edit()
+
+        def action_insert_unsorted_subtask(self) -> None:
+            self._cancel_prompt()
+            self._exit_edit_mode(commit=False)
+            self._sync_selection_from_table_cursor()
+            if self.state.insert_unsorted_subtask() is None:
+                self._set_message("no row selected")
+                return
+            self._refresh_table()
+            self._start_description_edit()
+
+        def action_insert_sorted_subtask(self) -> None:
+            self._cancel_prompt()
+            self._exit_edit_mode(commit=False)
+            self._sync_selection_from_table_cursor()
+            if self.state.insert_sorted_subtask() is None:
+                self._set_message("no row selected")
+                return
             self._refresh_table()
             self._start_description_edit()
 

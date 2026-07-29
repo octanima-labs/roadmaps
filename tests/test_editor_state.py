@@ -286,6 +286,69 @@ def test_insert_sorted_task_uses_selected_nested_sibling_level() -> None:
     assert state.selected_path == (0, 1)
 
 
+def test_insert_unsorted_subtask_converts_leaf_to_group_and_inherits_milestone() -> None:
+    state = EditorState(Roadmap([Task("parent", milestone=3)]))
+
+    task = state.insert_unsorted_subtask()
+
+    group = state.roadmap.steps[0]
+    assert isinstance(group, TaskGroup)
+    assert task is group.tasks[0]
+    assert task.description == NEW_TASK_DESCRIPTION
+    assert task.order == UNSORTED
+    assert task.milestone == 3
+    assert state.selected_path == (0, 0)
+    assert state.dirty is True
+
+
+def test_insert_sorted_subtask_appends_to_group_and_renumbers_sorted_children() -> None:
+    group = TaskGroup(
+        "group",
+        milestone=2,
+        tasks=[
+            Task("first", order=1),
+            Task("loose"),
+            Task("second", order=2),
+        ],
+    )
+    state = EditorState(Roadmap([group]))
+
+    task = state.insert_sorted_subtask()
+
+    assert [child.description for child in group.tasks] == [
+        "first",
+        "loose",
+        "second",
+        NEW_TASK_DESCRIPTION,
+    ]
+    assert [child.order for child in group.tasks] == [1, UNSORTED, 2, 3]
+    assert task is group.tasks[3]
+    assert task.milestone == 2
+    assert state.selected_path == (0, 3)
+    assert state.dirty is True
+
+
+def test_insert_subtask_expands_collapsed_parent() -> None:
+    group = TaskGroup("group", tasks=[Task("child")])
+    state = EditorState(Roadmap([group]))
+    assert state.toggle_selected_group_collapsed() is True
+
+    task = state.insert_unsorted_subtask()
+
+    assert task is group.tasks[1]
+    assert state.selected_path == (0, 1)
+    assert [row.description for row in state.rows] == ["group", "child", NEW_TASK_DESCRIPTION]
+
+
+def test_insert_subtask_without_selection_is_noop() -> None:
+    state = EditorState(Roadmap())
+
+    assert state.insert_unsorted_subtask() is None
+    assert state.insert_sorted_subtask() is None
+    assert state.roadmap.steps == []
+    assert state.dirty is False
+
+
 def test_update_selected_description_rejects_completed_rows() -> None:
     state = EditorState(Roadmap([Task("done", status=COMPLETED)]))
 
