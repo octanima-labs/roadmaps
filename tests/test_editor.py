@@ -242,6 +242,34 @@ def test_editor_description_edit_commit_and_cancel() -> None:
     assert app.message_bar.value == "edit cancelled"
 
 
+@pytest.mark.parametrize(
+    ("meta", "expected"),
+    [
+        ({"row": 1, "column": 4}, 1),
+        ({"row": -1, "column": 4}, None),
+        ({"row": 2, "column": 4, "out_of_bounds": True}, None),
+        ({"row": 2, "column": 4}, None),
+        ({}, None),
+    ],
+)
+def test_editor_table_event_row_index_validates_click_targets(
+    meta: dict[str, object],
+    expected: int | None,
+) -> None:
+    app = create_editor_app(Document(Roadmap([Task("first"), Task("second")]), "text"))
+    _wire_fake_widgets(app)
+    app._refresh_table()
+    app.table.hover_row = 1
+
+    row_index = app._event_table_row_index(
+        SimpleNamespace(
+            style=SimpleNamespace(meta=meta),
+        )
+    )
+
+    assert row_index == expected
+
+
 def test_editor_milestone_prompt_updates_selected_item() -> None:
     app = create_editor_app(Document(Roadmap([Task("task")]), "text"))
     _wire_fake_widgets(app)
@@ -663,9 +691,14 @@ def test_editor_toggle_group_collapsed_action_and_right_click() -> None:
     assert app.table.rows[0][4].plain == "▸ group"
     assert app.message_bar.value == "group toggled"
 
-    app.table.hover_row = 0
     stopped: list[bool] = []
-    app.on_mouse_down(SimpleNamespace(button=3, stop=lambda: stopped.append(True)))
+    app.on_mouse_down(
+        SimpleNamespace(
+            button=3,
+            style=SimpleNamespace(meta={"row": 0, "column": 4}),
+            stop=lambda: stopped.append(True),
+        )
+    )
     assert [row.description for row in app.state.rows] == ["group", "child"]
     assert stopped == [True]
 
@@ -874,6 +907,39 @@ def test_editor_save_after_edit_updates_document(tmp_path: Path) -> None:
 
     assert path.read_text() == "- [ ] new"
     assert app.editing is False
+
+
+def test_textual_pilot_table_enter_starts_description_editing() -> None:
+    pytest.importorskip("textual")
+    app = create_editor_app(Document(Roadmap([Task("first")]), "text"))
+
+    async def run_pilot() -> None:
+        async with app.run_test() as pilot:
+            await pilot.press("enter")
+            assert app.editing is True
+            assert app.edit_input.value == "first"
+
+            await pilot.press("escape")
+            assert app.editing is False
+
+    asyncio.run(run_pilot())
+
+
+def test_textual_pilot_double_click_row_starts_description_editing() -> None:
+    pytest.importorskip("textual")
+    app = create_editor_app(Document(Roadmap([Task("first"), Task("second")]), "text"))
+
+    async def run_pilot() -> None:
+        async with app.run_test(size=(80, 20)) as pilot:
+            await pilot.click("#roadmap-grid", offset=(20, 2))
+            assert app.editing is False
+
+            await pilot.double_click("#roadmap-grid", offset=(20, 2))
+            assert app.state.selected_path == (1,)
+            assert app.editing is True
+            assert app.edit_input.value == "second"
+
+    asyncio.run(run_pilot())
 
 
 def test_textual_pilot_drives_editor_keybindings(tmp_path: Path) -> None:

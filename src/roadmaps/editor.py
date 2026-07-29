@@ -38,6 +38,26 @@ def create_editor_app(document: Document) -> Any:
     static: Any = textual_widgets.Static
     text: Any = rich_text.Text
 
+    class RoadmapDataTable(data_table):  # type: ignore[misc, valid-type]
+        BINDINGS = (
+            ("enter", "edit_description", "Edit"),
+        )
+
+        def action_edit_description(self) -> None:
+            self.app.action_edit_description()
+
+        async def _on_click(self, event: Any) -> None:
+            if getattr(event, "button", None) == 1 and getattr(event, "chain", 1) >= 2:
+                row_index = self.app._event_table_row_index(event)
+                if row_index is not None:
+                    self.app._cancel_prompt()
+                    self.app._exit_edit_mode(commit=False)
+                    self.app._sync_selection_from_cursor_row(row_index)
+                    self.app._start_description_edit()
+                    event.stop()
+                    return
+            await super()._on_click(event)
+
     class RoadmapEditorApp(app_base):  # type: ignore[misc, valid-type]
         CSS = """
         #top-bar {
@@ -105,7 +125,7 @@ def create_editor_app(document: Document) -> Any:
         def compose(self) -> Any:
             self.top_bar = static(_top_bar_text(self.document, self.state), id="top-bar")
             yield self.top_bar
-            table = data_table(id="roadmap-grid", zebra_stripes=True)
+            table = RoadmapDataTable(id="roadmap-grid", zebra_stripes=True)
             table.cursor_type = "row"
             self.table = table
             yield table
@@ -373,11 +393,10 @@ def create_editor_app(document: Document) -> Any:
         def on_mouse_down(self, event: Any) -> None:
             if getattr(event, "button", None) != 3:
                 return
-            table = self._table()
-            hover_row = getattr(table, "hover_row", None)
-            if hover_row is None:
+            row_index = self._event_table_row_index(event)
+            if row_index is None:
                 return
-            self._sync_selection_from_cursor_row(hover_row)
+            self._sync_selection_from_cursor_row(row_index)
             if self.state.toggle_selected_group_collapsed():
                 self._refresh_table()
                 self._set_message("group toggled")
@@ -759,6 +778,16 @@ def create_editor_app(document: Document) -> Any:
                 return
             if 0 <= cursor_row < len(rows):
                 self.state.selected_path = rows[cursor_row].path
+
+        def _event_table_row_index(self, event: Any) -> int | None:
+            style = getattr(event, "style", None)
+            meta = getattr(style, "meta", None) if style is not None else None
+            if not isinstance(meta, dict) or meta.get("out_of_bounds", False):
+                return None
+            row_index = meta.get("row")
+            if not isinstance(row_index, int) or not 0 <= row_index < len(self.state.rows):
+                return None
+            return row_index
 
         def _refresh_top_bar(self) -> None:
             top_bar = self.top_bar or self.query_one("#top-bar", static)
