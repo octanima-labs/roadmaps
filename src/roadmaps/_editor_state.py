@@ -46,6 +46,8 @@ class EditorState:
     dirty: bool = False
     selected_paths: set[Path] = field(default_factory=set)
     collapsed_item_ids: set[int] = field(default_factory=set)
+    range_anchor_path: Path | None = None
+    expand_groups_next: bool = True
 
     def __post_init__(self) -> None:
         self.repair_selection()
@@ -74,6 +76,7 @@ class EditorState:
         if path not in {row.path for row in self.rows}:
             return False
         self.selected_path = path
+        self.range_anchor_path = None
         return True
 
     @property
@@ -84,6 +87,7 @@ class EditorState:
         row = self.selected_row
         if row is None:
             return False
+        self.range_anchor_path = None
         if row.path in self.selected_paths:
             self.selected_paths.remove(row.path)
         else:
@@ -92,6 +96,7 @@ class EditorState:
 
     def clear_row_marks(self) -> None:
         self.selected_paths.clear()
+        self.range_anchor_path = None
 
     def move_selection(self, delta: int) -> bool:
         rows = self.rows
@@ -99,9 +104,11 @@ class EditorState:
             if self.selected_path is None:
                 return False
             self.selected_path = None
+            self.range_anchor_path = None
             return True
         if self.selected_path is None:
             self.selected_path = rows[0].path
+            self.range_anchor_path = None
             return True
 
         paths = [row.path for row in rows]
@@ -109,12 +116,45 @@ class EditorState:
             index = paths.index(self.selected_path)
         except ValueError:
             self.selected_path = rows[0].path
+            self.range_anchor_path = None
             return True
 
         new_index = min(max(index + delta, 0), len(rows) - 1)
         if new_index == index:
             return False
         self.selected_path = rows[new_index].path
+        self.range_anchor_path = None
+        return True
+
+    def extend_selection(self, delta: int) -> bool:
+        rows = self.rows
+        if not rows:
+            return False
+        if self.selected_path is None:
+            self.selected_path = rows[0].path
+            self.range_anchor_path = rows[0].path
+            self.selected_paths = {rows[0].path}
+            return True
+
+        paths = [row.path for row in rows]
+        try:
+            current_index = paths.index(self.selected_path)
+        except ValueError:
+            current_index = 0
+            self.selected_path = rows[0].path
+
+        if self.range_anchor_path not in paths:
+            self.range_anchor_path = self.selected_path
+        anchor_index = paths.index(self.range_anchor_path)
+
+        new_index = min(max(current_index + delta, 0), len(rows) - 1)
+        if new_index == current_index:
+            return False
+
+        self.selected_path = rows[new_index].path
+        start = min(anchor_index, new_index)
+        end = max(anchor_index, new_index)
+        self.selected_paths = {row.path for row in rows[start : end + 1]}
         return True
 
     def toggle_hide_completed(self) -> None:
@@ -280,6 +320,42 @@ class EditorState:
         self._repair_row_marks()
         self.repair_selection()
         return True
+
+    def toggle_visible_groups_collapsed(self) -> tuple[bool, bool]:
+        expand = self.expand_groups_next
+        self.expand_groups_next = not self.expand_groups_next
+        group_ids = {id(row.item) for row in self.rows if isinstance(row.item, TaskGroup)}
+        if not group_ids:
+            return False, expand
+
+        before = set(self.collapsed_item_ids)
+        if expand:
+            self.collapsed_item_ids.difference_update(group_ids)
+        else:
+            self.collapsed_item_ids.update(group_ids)
+        changed = self.collapsed_item_ids != before
+        self._repair_row_marks()
+        self.repair_selection()
+        return changed, expand
+
+    def adjust_selected_priority(self, delta: int) -> bool:
+        rows = self.selected_rows if self.selected_paths else [self.selected_row]
+        changed = False
+        for row in rows:
+            if row is None or row.completed:
+                continue
+            priority = _adjusted_priority(row.item, delta)
+            before = (row.item.priority, row.item.optional)
+            if priority == OPTIONAL_TASK:
+                row.item.set_optional(True)
+            else:
+                row.item.set_optional(False)
+                row.item.set_priority(priority)
+            if (row.item.priority, row.item.optional) != before:
+                changed = True
+        if changed:
+            self.dirty = True
+        return changed
 
     def adjust_selected_completion(
         self,
@@ -476,6 +552,7 @@ class EditorState:
         if not rows:
             self.selected_path = None
             self.selected_paths.clear()
+            self.range_anchor_path = None
             return
 
         if self.selected_path in {row.path for row in rows}:
@@ -554,6 +631,8 @@ class EditorState:
     def _repair_row_marks(self) -> None:
         visible_paths = {row.path for row in self.rows}
         self.selected_paths.intersection_update(visible_paths)
+        if self.range_anchor_path not in visible_paths:
+            self.range_anchor_path = None
 
     def _editable_selected_row(self) -> EditorRow | None:
         row = self.selected_row
@@ -635,6 +714,17 @@ def _priority_text(item: Task | TaskGroup) -> str:
     if item.priority > 0:
         return f"^{item.priority}"
     return ""
+
+
+def _adjusted_priority(item: Task | TaskGroup, delta: int) -> int:
+    if delta == 0:
+        return item.priority
+    if item.priority == OPTIONAL_TASK:
+        return DEFAULT_PRIORITY if delta > 0 else OPTIONAL_TASK
+    priority = item.priority + delta
+    if priority < DEFAULT_PRIORITY:
+        return OPTIONAL_TASK
+    return min(priority, MAX_PRIORITY)
 
 
 def parse_milestone_prompt(value: str) -> int:

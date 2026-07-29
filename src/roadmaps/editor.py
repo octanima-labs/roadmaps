@@ -82,9 +82,15 @@ def create_editor_app(document: Document) -> Any:
         BINDINGS = (
             ("up", "cursor_up", "Up"),
             ("down", "cursor_down", "Down"),
+            ("shift+up", "select_up", "Select up"),
+            ("shift+down", "select_down", "Select down"),
             ("enter", "edit_description", "Edit"),
             ("m", "edit_milestone", "Milestone"),
             ("p", "edit_priority", "Priority"),
+            ("alt+up", "increase_priority", "Priority +1"),
+            ("alt+down", "decrease_priority", "Priority -1"),
+            ("alt+shift+up", "increase_priority_large", "Priority +10"),
+            ("alt+shift+down", "decrease_priority_large", "Priority -10"),
             ("e", "edit_completion", "Completion"),
             ("+", "increase_completion", "Completion +1"),
             ("-", "decrease_completion", "Completion -1"),
@@ -97,6 +103,7 @@ def create_editor_app(document: Document) -> Any:
             ("space", "toggle_row_mark", "Select row"),
             ("ctrl+g", "group_rows", "Group rows"),
             ("ctrl+t", "toggle_group_collapsed", "Toggle group"),
+            ("ctrl+shift+t", "toggle_all_group_collapsed", "Toggle all groups"),
             ("ctrl+u", "insert_unsorted", "New unsorted"),
             ("ctrl+o", "insert_sorted", "New sorted"),
             ("ctrl+space", "cycle_status", "Cycle status"),
@@ -152,6 +159,12 @@ def create_editor_app(document: Document) -> Any:
             self._exit_edit_mode(commit=False)
             if self.state.move_selection(1):
                 self._select_current_row()
+
+        def action_select_up(self) -> None:
+            self._extend_selection(-1)
+
+        def action_select_down(self) -> None:
+            self._extend_selection(1)
 
         def action_edit_description(self) -> None:
             self._cancel_prompt()
@@ -214,6 +227,18 @@ def create_editor_app(document: Document) -> Any:
                 return
             self._start_completion_prompt()
 
+        def action_increase_priority(self) -> None:
+            self._adjust_priority_shortcut(1)
+
+        def action_decrease_priority(self) -> None:
+            self._adjust_priority_shortcut(-1)
+
+        def action_increase_priority_large(self) -> None:
+            self._adjust_priority_shortcut(10)
+
+        def action_decrease_priority_large(self) -> None:
+            self._adjust_priority_shortcut(-10)
+
         def action_increase_completion(self) -> None:
             self._adjust_completion_shortcut(1.0)
 
@@ -265,6 +290,17 @@ def create_editor_app(document: Document) -> Any:
                 self._set_message("group toggled")
             else:
                 self._set_message("selected row is not a group")
+
+        def action_toggle_all_group_collapsed(self) -> None:
+            if self.prompt_kind is not None or self.editing:
+                return
+            had_groups = any(row.group for row in self.state.rows)
+            changed, expanded = self.state.toggle_visible_groups_collapsed()
+            self._refresh_table()
+            if changed or had_groups:
+                self._set_message("groups expanded" if expanded else "groups collapsed")
+            else:
+                self._set_message("no visible groups changed")
 
         def action_move_row_up(self) -> None:
             if self.prompt_kind is not None or self.editing:
@@ -388,7 +424,15 @@ def create_editor_app(document: Document) -> Any:
                     self._exit_edit_mode(commit=True)
 
         def on_data_table_row_highlighted(self, event: Any) -> None:
-            self._sync_selection_from_cursor_row(event.cursor_row)
+            rows = self.state.rows
+            reset_range_anchor = not (
+                0 <= event.cursor_row < len(rows)
+                and self.state.selected_path == rows[event.cursor_row].path
+            )
+            self._sync_selection_from_cursor_row(
+                event.cursor_row,
+                reset_range_anchor=reset_range_anchor,
+            )
 
         def on_mouse_down(self, event: Any) -> None:
             if getattr(event, "button", None) != 3:
@@ -409,8 +453,12 @@ def create_editor_app(document: Document) -> Any:
         def key_escape(self) -> None:
             if self.prompt_kind is not None:
                 self._cancel_prompt()
-            else:
+            elif self.editing:
                 self._exit_edit_mode(commit=False)
+            elif self.state.selected_paths:
+                self.state.clear_row_marks()
+                self._refresh_table()
+                self._set_message("row selection cleared")
 
         def _start_description_edit(self) -> None:
             row = self.state.selected_row
@@ -572,6 +620,27 @@ def create_editor_app(document: Document) -> Any:
                 return
             self._refresh_table()
             self._set_message("completion updated" if changed else "completion unchanged")
+
+        def _extend_selection(self, delta: int) -> None:
+            if self.prompt_kind is not None or self.editing:
+                return
+            self._sync_selection_from_table_cursor(reset_range_anchor=False)
+            if self.state.extend_selection(delta):
+                self._refresh_table()
+                self._set_message("row selection extended")
+            else:
+                self._set_message("selection boundary reached")
+
+        def _adjust_priority_shortcut(self, delta: int) -> None:
+            if self.prompt_kind is not None or self.editing:
+                return
+            self._sync_selection_from_table_cursor()
+            changed = self.state.adjust_selected_priority(delta)
+            if changed:
+                self._refresh_table()
+                self._set_message("priority updated")
+            else:
+                self._set_message("priority unchanged")
 
         def _apply_completion_adjustment(
             self,
@@ -768,16 +837,35 @@ def create_editor_app(document: Document) -> Any:
                     table.move_cursor(row=index, animate=False)
                     return
 
-        def _sync_selection_from_table_cursor(self) -> None:
-            self._sync_selection_from_cursor_row(self._table().cursor_row)
+        def _sync_selection_from_table_cursor(
+            self,
+            *,
+            reset_range_anchor: bool = True,
+        ) -> None:
+            self._sync_selection_from_cursor_row(
+                self._table().cursor_row,
+                reset_range_anchor=reset_range_anchor,
+            )
 
-        def _sync_selection_from_cursor_row(self, cursor_row: int) -> None:
+        def _sync_selection_from_cursor_row(
+            self,
+            cursor_row: int,
+            *,
+            reset_range_anchor: bool = True,
+        ) -> None:
             rows = self.state.rows
             if not rows:
                 self.state.selected_path = None
+                if reset_range_anchor and not self._has_active_range_selection():
+                    self.state.range_anchor_path = None
                 return
             if 0 <= cursor_row < len(rows):
                 self.state.selected_path = rows[cursor_row].path
+                if reset_range_anchor and not self._has_active_range_selection():
+                    self.state.range_anchor_path = None
+
+        def _has_active_range_selection(self) -> bool:
+            return self.state.range_anchor_path is not None and bool(self.state.selected_paths)
 
         def _event_table_row_index(self, event: Any) -> int | None:
             style = getattr(event, "style", None)

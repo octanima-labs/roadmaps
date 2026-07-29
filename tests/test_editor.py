@@ -5,7 +5,16 @@ from typing import Any
 
 import pytest
 
-from roadmaps import COMPLETED, NOT_STARTED, ONGOING, Roadmap, Task, TaskGroup
+from roadmaps import (
+    COMPLETED,
+    DEFAULT_PRIORITY,
+    NOT_STARTED,
+    ONGOING,
+    OPTIONAL_TASK,
+    Roadmap,
+    Task,
+    TaskGroup,
+)
 from roadmaps._documents import Document, load_document
 from roadmaps.editor import (
     _top_bar_text,
@@ -632,6 +641,55 @@ def test_editor_toggle_row_mark_updates_description_prefix() -> None:
     assert app.message_bar.value == "row selection toggled"
 
 
+def test_editor_shift_selection_and_escape_clear_marks() -> None:
+    app = create_editor_app(
+        Document(Roadmap([Task("first"), Task("second"), Task("third"), Task("fourth")]), "text")
+    )
+    _wire_fake_widgets(app)
+    app._refresh_table()
+    app.action_cursor_down()
+
+    app.action_select_down()
+    assert app.state.selected_path == (2,)
+    assert app.state.selected_paths == {(1,), (2,)}
+    assert app.message_bar.value == "row selection extended"
+
+    app.action_select_down()
+    assert app.state.selected_path == (3,)
+    assert app.state.selected_paths == {(1,), (2,), (3,)}
+
+    app.key_escape()
+    assert app.state.selected_paths == set()
+    assert app.message_bar.value == "row selection cleared"
+
+
+def test_editor_priority_shortcuts_update_focus_or_marked_rows() -> None:
+    optional = Task("optional", optional=True)
+    pending = Task("pending")
+    done = Task("done", status=COMPLETED)
+    app = create_editor_app(Document(Roadmap([optional, pending, done]), "text"))
+    _wire_fake_widgets(app)
+    app._refresh_table()
+
+    app.action_increase_priority()
+    assert optional.optional is False
+    assert optional.priority == DEFAULT_PRIORITY
+    assert app.message_bar.value == "priority updated"
+
+    app.action_increase_priority()
+    assert optional.priority == 1
+
+    app.action_decrease_priority_large()
+    assert optional.optional is True
+    assert optional.priority == OPTIONAL_TASK
+
+    app.state.selected_paths = {(1,), (2,)}
+    app.action_increase_priority_large()
+    assert pending.priority == 10
+    assert done.priority == DEFAULT_PRIORITY
+    assert app.state.selected_paths == {(1,), (2,)}
+
+
 def test_editor_group_selected_rows_enters_group_description_edit() -> None:
     app = create_editor_app(Document(Roadmap([Task("first"), Task("second")]), "text"))
     _wire_fake_widgets(app)
@@ -701,6 +759,31 @@ def test_editor_toggle_group_collapsed_action_and_right_click() -> None:
     )
     assert [row.description for row in app.state.rows] == ["group", "child"]
     assert stopped == [True]
+
+
+def test_editor_toggle_all_group_collapsed_alternates_visible_groups() -> None:
+    app = create_editor_app(
+        Document(
+            Roadmap(
+                [TaskGroup("outer", tasks=[TaskGroup("inner", tasks=[Task("child")])])]
+            ),
+            "text",
+        )
+    )
+    _wire_fake_widgets(app)
+    app._refresh_table()
+
+    app.action_toggle_all_group_collapsed()
+    assert [row.description for row in app.state.rows] == ["outer", "inner", "child"]
+    assert app.message_bar.value == "groups expanded"
+
+    app.action_toggle_all_group_collapsed()
+    assert [row.description for row in app.state.rows] == ["outer"]
+    assert app.message_bar.value == "groups collapsed"
+
+    app.action_toggle_all_group_collapsed()
+    assert [row.description for row in app.state.rows] == ["outer", "inner"]
+    assert app.message_bar.value == "groups expanded"
 
 
 def test_editor_highlight_event_updates_internal_selection() -> None:
@@ -938,6 +1021,58 @@ def test_textual_pilot_double_click_row_starts_description_editing() -> None:
             assert app.state.selected_path == (1,)
             assert app.editing is True
             assert app.edit_input.value == "second"
+
+    asyncio.run(run_pilot())
+
+
+def test_textual_pilot_drives_remaining_shortcuts() -> None:
+    pytest.importorskip("textual")
+    second = Task("second")
+    app = create_editor_app(
+        Document(
+            Roadmap(
+                [
+                    Task("first"),
+                    second,
+                    TaskGroup("group", tasks=[Task("child")]),
+                ]
+            ),
+            "text",
+        )
+    )
+
+    async def run_pilot() -> None:
+        async with app.run_test(size=(80, 20)) as pilot:
+            await pilot.press("shift+down")
+            assert app.state.selected_paths == {(0,), (1,)}
+
+            await pilot.press("shift+down")
+            assert app.state.selected_paths == {(0,), (1,), (2,)}
+
+            await pilot.press("escape")
+            assert app.state.selected_paths == set()
+
+            await pilot.press("up")
+            await pilot.press("alt+up")
+            assert second.priority == 1
+
+            await pilot.press("alt+shift+up")
+            assert second.priority == 11
+
+            await pilot.press("ctrl+shift+t")
+            assert [row.description for row in app.state.rows] == [
+                "first",
+                "second",
+                "group",
+                "child",
+            ]
+
+            await pilot.press("ctrl+shift+t")
+            assert [row.description for row in app.state.rows] == [
+                "first",
+                "second",
+                "group",
+            ]
 
     asyncio.run(run_pilot())
 
