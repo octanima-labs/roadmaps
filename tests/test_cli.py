@@ -65,8 +65,34 @@ def test_next_outputs_source_text_format(tmp_path: Path, capsys) -> None:
 
     assert capsys.readouterr().out == (
         "- [ ]! high priority\n"
+    )
+
+
+def test_next_count_outputs_multiple_tasks(tmp_path: Path, capsys) -> None:
+    path = tmp_path / "roadmap.txt"
+    path.write_text(
+        """
+- [ ] low priority
+- [ ]! high priority
+- [x] done
+""".strip()
+    )
+
+    assert main(["next", str(path), "--count", "2"]) == 0
+
+    assert capsys.readouterr().out == (
+        "- [ ]! high priority\n"
         "- [ ] low priority\n"
     )
+
+
+def test_next_rejects_invalid_count(tmp_path: Path, capsys) -> None:
+    path = tmp_path / "roadmap.txt"
+    path.write_text("- [ ] task")
+
+    assert main(["next", str(path), "--count", "0"]) == 1
+
+    assert "count" in capsys.readouterr().err
 
 
 def test_next_outputs_source_markdown_format(tmp_path: Path, capsys) -> None:

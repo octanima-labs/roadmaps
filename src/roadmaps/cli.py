@@ -64,6 +64,12 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Show incomplete next-step tasks in the source format.",
     )
     next_parser.add_argument("file", type=Path)
+    next_parser.add_argument(
+        "--count",
+        type=int,
+        default=1,
+        help="Number of next tasks to show. Must be at least 1.",
+    )
     next_parser.set_defaults(handler=_handle_next)
 
     stats_parser = subparsers.add_parser(
@@ -153,7 +159,13 @@ def _handle_next(args: argparse.Namespace) -> int:
     if document is None:
         return 1
 
-    print(render_roadmap(Roadmap(document.roadmap.next_step()), document.format))
+    try:
+        tasks = document.roadmap.next(args.count)
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    print(render_roadmap(Roadmap(tasks), document.format))
     return 0
 
 

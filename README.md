@@ -51,7 +51,7 @@ roadmap = Roadmap.from_text(source)
 
 print(roadmap.completion_percent)
 print(roadmap.to_text())
-print([task.description for task in roadmap.next_step()])
+print([task.description for task in roadmap.next(count=3)])
 ```
 
 ## Text Syntax
@@ -153,7 +153,7 @@ Useful entry points:
 - `Roadmap.from_yaml(source)` and `roadmap.to_yaml()`
 - `Roadmap.from_dict(data)` and `roadmap.to_dict()`
 - `Roadmap.from_markdown(source)` and `roadmap.to_markdown()`
-- `roadmap.next_step()` for incomplete leaf tasks ordered by priority/status/order
+- `roadmap.next(count=1)` and `task_group.next(count=1)` for counted incomplete leaf tasks ordered by priority, optionality, status, and order
 - `roadmap.milestones()` for leaf tasks grouped by milestone
 - `roadmap.filter_items()` for status, optionality, and conventional category filtering across tasks and groups
 - `Task.to_group()` and `TaskGroup.to_task()` for low-level task/group conversion
@@ -188,10 +188,11 @@ Validate a file:
 roadmap validate roadmap.roadmap
 ```
 
-Show next-step tasks in the source format:
+Show the next task, or several next tasks, in the source format:
 
 ```bash
 roadmap next roadmap.md
+roadmap next roadmap.md --count 3
 ```
 
 Render between formats:

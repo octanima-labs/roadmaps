@@ -330,6 +330,9 @@ class TaskGroup(Task):
     def leaf_tasks(self) -> list[Task]:
         return list(_leaf_tasks(self.tasks))
 
+    def next(self, count: int = 1) -> list[Task]:
+        return _next_tasks(self.leaf_tasks(), count)
+
     def mark_not_started(self) -> None:
         for task in self.tasks:
             task.mark_not_started()
@@ -498,11 +501,11 @@ class Roadmap:
             if _matches_filter_item(item, status_filter, optional, category_set)
         ]
 
+    def next(self, count: int = 1) -> list[Task]:
+        return _next_tasks(self.leaf_tasks(), count)
+
     def next_step(self) -> list[Task]:
-        return sorted(
-            (task for task in self.leaf_tasks() if task.status != COMPLETED),
-            key=_next_step_key,
-        )
+        return self.next()
 
     def to_dict(self) -> dict[str, Any]:
         from roadmaps.serializers import JsonSerializer
@@ -661,8 +664,28 @@ def _group_to_task_in_items(
     return None
 
 
-def _next_step_key(task: Task) -> tuple[int, int, int, int]:
+def _next_tasks(tasks: Iterable[Task], count: int) -> list[Task]:
+    count = _validated_next_count(count)
+    ranked = sorted(
+        (task for task in tasks if task.status != COMPLETED),
+        key=_next_step_key,
+    )
+    return ranked[:count]
+
+
+def _validated_next_count(count: int) -> int:
+    if isinstance(count, bool) or not isinstance(count, int):
+        msg = "count must be an integer greater than or equal to 1"
+        raise ValueError(msg)  # noqa: TRY004 - public API uses ValueError for all invalid counts.
+    if count < 1:
+        msg = "count must be an integer greater than or equal to 1"
+        raise ValueError(msg)
+    return count
+
+
+def _next_step_key(task: Task) -> tuple[int, int, int, int, int]:
+    optional_rank = 1 if task.is_optional() else 0
     status_rank = 0 if task.status == ONGOING else 1
     order_rank = 0 if task.order != UNSORTED else 1
     order_value = task.order if task.order != UNSORTED else 0
-    return (-task.priority, status_rank, order_rank, order_value)
+    return (-task.priority, optional_rank, status_rank, order_rank, order_value)

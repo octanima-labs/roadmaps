@@ -249,7 +249,7 @@ def test_task_group_dates_are_derived_from_descendant_leaf_tasks() -> None:
     assert group.completion_date == second_done
 
 
-def test_next_step_returns_incomplete_leaf_tasks_in_priority_order() -> None:
+def test_next_returns_counted_incomplete_leaf_tasks_in_priority_order() -> None:
     roadmap = Roadmap(
         [
             Task("unordered"),
@@ -262,7 +262,8 @@ def test_next_step_returns_incomplete_leaf_tasks_in_priority_order() -> None:
         ]
     )
 
-    assert [task.description for task in roadmap.next_step()] == [
+    assert [task.description for task in roadmap.next()] == ["high priority"]
+    assert [task.description for task in roadmap.next(count=6)] == [
         "high priority",
         "nested priority",
         "ongoing",
@@ -270,6 +271,48 @@ def test_next_step_returns_incomplete_leaf_tasks_in_priority_order() -> None:
         "ordered later",
         "unordered",
     ]
+    assert [task.description for task in roadmap.next_step()] == ["high priority"]
+
+
+def test_next_ranks_optional_after_mandatory_only_at_equal_priority() -> None:
+    roadmap = Roadmap(
+        [
+            Task("mandatory"),
+            Task("optional", optional=True),
+            Task("urgent", priority=MAX_PRIORITY),
+        ]
+    )
+
+    assert [task.description for task in roadmap.next(count=3)] == [
+        "urgent",
+        "mandatory",
+        "optional",
+    ]
+
+
+def test_task_group_next_uses_group_subtree_only() -> None:
+    group = TaskGroup(
+        "group",
+        tasks=[Task("group first", priority=10), Task("group second")],
+    )
+    roadmap = Roadmap([Task("roadmap urgent", priority=MAX_PRIORITY), group])
+
+    assert [task.description for task in group.next(count=2)] == [
+        "group first",
+        "group second",
+    ]
+    assert [task.description for task in roadmap.next(count=2)] == [
+        "roadmap urgent",
+        "group first",
+    ]
+
+
+@pytest.mark.parametrize("count", [0, -1, 1.0, "1", True, False])
+def test_next_rejects_invalid_counts(count: object) -> None:
+    roadmap = Roadmap([Task("task")])
+
+    with pytest.raises(ValueError, match="count"):
+        roadmap.next(count)  # type: ignore[arg-type]
 
 
 def test_filter_items_matches_groups_and_tasks_in_traversal_order() -> None:
