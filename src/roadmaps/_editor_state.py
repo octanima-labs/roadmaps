@@ -7,6 +7,7 @@ from roadmaps._validation import _validate_description, _validated_task_completi
 from roadmaps.constants import (
     COMPLETED,
     DEFAULT_PRIORITY,
+    ENABLE_TUI_ORDER_BREADCRUMBS,
     MAX_PRIORITY,
     NO_MILESTONE,
     NOT_STARTED,
@@ -662,14 +663,16 @@ def _flatten_rows(
     collapsed_item_ids: set[int],
     selected_paths: set[Path],
     prefix: Path = (),
+    order_prefix: tuple[str, ...] = (),
 ) -> list[EditorRow]:
     rows: list[EditorRow] = []
     for index, item in enumerate(items):
         path = (*prefix, index)
+        order_path = (*order_prefix, _order_part(item))
         if hide_completed and item.status == COMPLETED:
             continue
 
-        rows.append(_row_from_item(item, path, selected_paths, collapsed_item_ids))
+        rows.append(_row_from_item(item, path, order_path, selected_paths, collapsed_item_ids))
         if isinstance(item, TaskGroup) and id(item) not in collapsed_item_ids:
             rows.extend(
                 _flatten_rows(
@@ -678,6 +681,7 @@ def _flatten_rows(
                     collapsed_item_ids,
                     selected_paths,
                     path,
+                    order_path,
                 )
             )
     return rows
@@ -686,6 +690,7 @@ def _flatten_rows(
 def _row_from_item(
     item: Task | TaskGroup,
     path: Path,
+    order_path: tuple[str, ...],
     selected_paths: set[Path],
     collapsed_item_ids: set[int],
 ) -> EditorRow:
@@ -693,7 +698,7 @@ def _row_from_item(
         path=path,
         depth=len(path) - 1,
         item=item,
-        order_text="-" if item.order == UNSORTED else f"{item.order}.",
+        order_text=_order_text(item, order_path),
         completion_text=item.completion_percent,
         priority_text=_priority_text(item),
         milestone_text="" if item.milestone == NO_MILESTONE else str(item.milestone),
@@ -704,6 +709,16 @@ def _row_from_item(
         selected=path in selected_paths,
         collapsed=isinstance(item, TaskGroup) and id(item) in collapsed_item_ids,
     )
+
+
+def _order_text(item: Task | TaskGroup, order_path: tuple[str, ...]) -> str:
+    if ENABLE_TUI_ORDER_BREADCRUMBS:
+        return ".".join(order_path)
+    return _order_part(item) if item.order == UNSORTED else f"{item.order}."
+
+
+def _order_part(item: Task | TaskGroup) -> str:
+    return "-" if item.order == UNSORTED else str(item.order)
 
 
 def _priority_text(item: Task | TaskGroup) -> str:

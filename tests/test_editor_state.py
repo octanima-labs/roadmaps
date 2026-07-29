@@ -42,12 +42,48 @@ def test_rows_expose_display_fields_and_initial_selection() -> None:
         ((0, 0), 1, "urgent"),
         ((1,), 0, "optional"),
     ]
-    assert state.rows[0].order_text == "1."
+    assert state.rows[0].order_text == "1"
+    assert state.rows[1].order_text == "1.-"
     assert state.rows[0].completion_text == "0%"
     assert state.rows[0].milestone_text == "2"
     assert state.rows[0].group is True
     assert state.rows[1].priority_text == "!"
     assert state.rows[2].priority_text == "?"
+
+
+def test_rows_can_disable_tui_order_breadcrumbs(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("roadmaps._editor_state.ENABLE_TUI_ORDER_BREADCRUMBS", False)
+
+    state = EditorState(Roadmap([TaskGroup("group", order=1, tasks=[Task("child")])]))
+
+    assert [row.order_text for row in state.rows] == ["1.", "-"]
+
+
+def test_rows_show_literal_dash_parts_in_tui_order_breadcrumbs() -> None:
+    state = EditorState(
+        Roadmap(
+            [
+                TaskGroup(
+                    "first",
+                    order=1,
+                    tasks=[TaskGroup("nested", order=1, tasks=[Task("loose")])],
+                ),
+                TaskGroup("second", order=12, tasks=[TaskGroup("loose", tasks=[Task("child", order=1)])]),
+                TaskGroup("loose", tasks=[Task("child", order=1)]),
+            ]
+        )
+    )
+
+    assert [row.order_text for row in state.rows] == [
+        "1",
+        "1.1",
+        "1.1.-",
+        "12",
+        "12.-",
+        "12.-.1",
+        "-",
+        "-.1",
+    ]
 
 
 def test_move_selection_clamps_without_marking_dirty() -> None:

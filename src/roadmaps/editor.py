@@ -908,15 +908,15 @@ def _top_bar_text(document: Document, state: EditorState) -> str:
 
 def _populate_table(table: Any, state: EditorState, text: Any) -> None:
     table.clear(columns=True)
-    table.add_columns("Order", "Completion", "Priority", "Milestone", "Description")
+    table.add_columns("Completion", "Priority", "Milestone", "Order", "Description")
     rows = state.rows
     descriptions = _tree_descriptions(rows)
     for row in rows:
         table.add_row(
-            _styled_text(row.order_text, row, text),
             _styled_text(row.completion_text, row, text),
             _styled_text(row.priority_text, row, text),
             _styled_text(row.milestone_text, row, text),
+            _styled_text(row.order_text, row, text),
             _styled_text(descriptions[row.path], row, text),
             key=str(row.path),
         )
@@ -928,6 +928,8 @@ def _styled_text(value: str, row: EditorRow, text: Any) -> Any:
         style = "dim"
     elif row.status == ONGOING:
         style = "yellow"
+    if row.selected:
+        style = f"{style} reverse".strip()
     return text(value, style=style)
 
 

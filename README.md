@@ -158,6 +158,7 @@ Useful entry points:
 - `roadmap.filter_items()` for status, optionality, and conventional category filtering across tasks and groups
 - `Task.to_group()` and `TaskGroup.to_task()` for low-level task/group conversion
 - `roadmap.task_to_group(task)` and `roadmap.group_to_task(group)` for in-place identity-based conversion, including nested items
+- `ENABLE_TUI_ORDER_BREADCRUMBS` controls whether the optional editor shows display-only order breadcrumbs
 - `Task`, `TaskGroup`, and `Roadmap` for direct object construction
 
 `Task.mark_ongoing()` sets `start_date` when missing and clears `completion_date`. `Task.mark_completed()` sets `completion_date` and fills `start_date` if needed. `TaskGroup.start_date` and `TaskGroup.completion_date` are derived from descendant leaf tasks.

@@ -1,6 +1,7 @@
 from .constants import (
     COMPLETED,
     DEFAULT_PRIORITY,
+    ENABLE_TUI_ORDER_BREADCRUMBS,
     MAX_PRIORITY,
     NO_MILESTONE,
     NOT_STARTED,
@@ -21,6 +22,7 @@ from .serializers import (
 __all__ = [
     "COMPLETED",
     "DEFAULT_PRIORITY",
+    "ENABLE_TUI_ORDER_BREADCRUMBS",
     "MAX_PRIORITY",
     "NOT_STARTED",
     "NO_MILESTONE",

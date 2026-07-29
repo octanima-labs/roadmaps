@@ -159,6 +159,19 @@ def test_tree_description_marks_selected_and_collapsed_rows() -> None:
     assert _tree_descriptions(app.state.rows)[(0,)] == "* ▸ group"
 
 
+def test_editor_table_uses_visual_polish_columns_and_selected_style() -> None:
+    app = create_editor_app(Document(Roadmap([Task("first", order=1)]), "text"))
+    _wire_fake_widgets(app)
+    app._refresh_table()
+
+    app.action_toggle_row_mark()
+
+    assert app.table.columns == ["Completion", "Priority", "Milestone", "Order", "Description"]
+    assert app.table.rows[0][3].plain == "1"
+    assert app.table.rows[0][4].plain == "* first"
+    assert "reverse" in str(app.table.rows[0][4].style)
+
+
 def test_save_prompt_parsers_accept_defaults_and_choices() -> None:
     assert parse_save_format_prompt("") == "yaml"
     assert parse_save_format_prompt("JSON") == "json"
@@ -309,7 +322,7 @@ def test_editor_priority_prompt_sets_optional_and_clears_priority() -> None:
     app.on_input_submitted(SimpleNamespace(input=app.edit_input))
 
     assert app.document.roadmap.steps[0].optional is True
-    assert app.table.rows[0][2].plain == "?"
+    assert app.table.rows[0][1].plain == "?"
 
     app.action_edit_priority()
     app.edit_input.value = ""
