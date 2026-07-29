@@ -4,10 +4,12 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
+from rich.text import Text
 
 from roadmaps import (
     COMPLETED,
     DEFAULT_PRIORITY,
+    MAX_PRIORITY,
     NOT_STARTED,
     ONGOING,
     OPTIONAL_TASK,
@@ -17,6 +19,7 @@ from roadmaps import (
 )
 from roadmaps._documents import Document, load_document
 from roadmaps.editor import (
+    _top_bar_renderable,
     _top_bar_text,
     _tree_description,
     _tree_descriptions,
@@ -94,9 +97,19 @@ def test_create_editor_app_wraps_document_and_state() -> None:
 
 def test_top_bar_shows_path_format_and_dirty_marker() -> None:
     app = create_editor_app(Document(Roadmap([Task("task")]), "yaml"))
+
+    assert _top_bar_text(app.document, app.state) == "PATH <UNNAMED>  FORMAT yaml"
+    clean_renderable = _top_bar_renderable(app.document, app.state, Text)
+    assert clean_renderable.plain == "PATH <UNNAMED>  FORMAT yaml"
+    assert "UNSAVED" not in clean_renderable.plain
+
     app.state.dirty = True
 
-    assert _top_bar_text(app.document, app.state) == "<UNNAMED> [yaml] *"
+    assert _top_bar_text(app.document, app.state) == "PATH <UNNAMED>  FORMAT yaml  [UNSAVED]"
+    renderable = _top_bar_renderable(app.document, app.state, Text)
+    assert renderable.plain == "PATH <UNNAMED>  FORMAT yaml  [UNSAVED]"
+    assert renderable.spans
+    assert any("orange" in str(span.style) for span in renderable.spans)
 
 
 def test_tree_description_uses_visible_tree_guides() -> None:
@@ -170,6 +183,44 @@ def test_editor_table_uses_visual_polish_columns_and_selected_style() -> None:
     assert app.table.rows[0][3].plain == "1"
     assert app.table.rows[0][4].plain == "* first"
     assert "reverse" in str(app.table.rows[0][4].style)
+
+
+def test_editor_table_styles_priority_and_completed_rows() -> None:
+    app = create_editor_app(
+        Document(
+            Roadmap(
+                [
+                    Task("low", priority=1),
+                    Task("mid", priority=500),
+                    Task("high", priority=MAX_PRIORITY),
+                    Task("optional", optional=True),
+                    Task("done", status=COMPLETED),
+                    Task("optional done", optional=True, status=COMPLETED),
+                ]
+            ),
+            "text",
+        )
+    )
+    _wire_fake_widgets(app)
+    app._refresh_table()
+
+    assert "green" in str(app.table.rows[0][1].style)
+    assert "green" in str(app.table.rows[0][2].style)
+    assert "green" in str(app.table.rows[0][3].style)
+    assert "green" in str(app.table.rows[0][4].style)
+    assert "green" not in str(app.table.rows[0][0].style)
+    assert "yellow" in str(app.table.rows[1][1].style)
+    assert "red" in str(app.table.rows[2][1].style)
+    assert "cyan" in str(app.table.rows[3][1].style)
+    assert app.table.rows[5][1].plain == "?"
+    assert all("dim" in str(app.table.rows[5][index].style) for index in range(1, 5))
+    assert all("cyan" not in str(app.table.rows[5][index].style) for index in range(1, 5))
+
+    app.state.selected_paths = {(4,)}
+    app._refresh_table()
+    completed_style = str(app.table.rows[4][4].style)
+    assert "dim" in completed_style
+    assert "reverse" in completed_style
 
 
 def test_save_prompt_parsers_accept_defaults_and_choices() -> None:

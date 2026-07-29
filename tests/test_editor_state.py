@@ -45,8 +45,8 @@ def test_rows_expose_display_fields_and_initial_selection() -> None:
     ]
     assert state.rows[0].order_text == "1"
     assert state.rows[1].order_text == "1.-"
-    assert state.rows[0].completion_text == "0%"
-    assert state.rows[0].milestone_text == "2"
+    assert state.rows[0].completion_text == "[░░░░░░░░░░] 0%"
+    assert state.rows[0].milestone_text == "II"
     assert state.rows[0].group is True
     assert state.rows[1].priority_text == "!"
     assert state.rows[2].priority_text == "?"
@@ -85,6 +85,33 @@ def test_rows_show_literal_dash_parts_in_tui_order_breadcrumbs() -> None:
         "-",
         "-.1",
     ]
+
+
+def test_rows_show_progress_bars_with_ascii_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("roadmaps._editor_state.ENABLE_TUI_UNICODE_PROGRESS", False)
+    state = EditorState(Roadmap([Task("task", status=ONGOING, completion=40.0)]))
+
+    assert state.rows[0].completion_text == "[####------] 40%"
+
+
+def test_rows_show_roman_milestones_with_decimal_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    state = EditorState(
+        Roadmap([Task("small", milestone=4), Task("large", milestone=4000)])
+    )
+
+    assert [row.milestone_text for row in state.rows] == ["IV", "4000"]
+
+    monkeypatch.setattr("roadmaps._editor_state.ENABLE_TUI_ROMAN_MILESTONES", False)
+    state = EditorState(Roadmap([Task("small", milestone=4)]))
+    assert state.rows[0].milestone_text == "4"
+
+
+def test_rows_preserve_multiline_descriptions() -> None:
+    state = EditorState(Roadmap([Task("first line\nsecond line")]))
+
+    assert state.rows[0].description == "first line\nsecond line"
 
 
 def test_move_selection_clamps_without_marking_dirty() -> None:

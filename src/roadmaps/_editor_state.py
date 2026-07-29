@@ -8,11 +8,14 @@ from roadmaps.constants import (
     COMPLETED,
     DEFAULT_PRIORITY,
     ENABLE_TUI_ORDER_BREADCRUMBS,
+    ENABLE_TUI_ROMAN_MILESTONES,
+    ENABLE_TUI_UNICODE_PROGRESS,
     MAX_PRIORITY,
     NO_MILESTONE,
     NOT_STARTED,
     ONGOING,
     OPTIONAL_TASK,
+    TUI_PROGRESS_BAR_WIDTH,
     UNSORTED,
 )
 from roadmaps.model import Roadmap, Task, TaskGroup
@@ -699,9 +702,9 @@ def _row_from_item(
         depth=len(path) - 1,
         item=item,
         order_text=_order_text(item, order_path),
-        completion_text=item.completion_percent,
+        completion_text=_completion_text(item),
         priority_text=_priority_text(item),
-        milestone_text="" if item.milestone == NO_MILESTONE else str(item.milestone),
+        milestone_text=_milestone_text(item),
         description=item.description,
         status=item.status,
         completed=item.status == COMPLETED,
@@ -721,6 +724,16 @@ def _order_part(item: Task | TaskGroup) -> str:
     return "-" if item.order == UNSORTED else str(item.order)
 
 
+def _completion_text(item: Task | TaskGroup) -> str:
+    completion = max(0.0, min(item.completion, 100.0))
+    width = max(TUI_PROGRESS_BAR_WIDTH, 1)
+    filled = width if completion >= 100.0 else int(completion * width / 100.0)
+    empty = width - filled
+    filled_char = "█" if ENABLE_TUI_UNICODE_PROGRESS else "#"
+    empty_char = "░" if ENABLE_TUI_UNICODE_PROGRESS else "-"
+    return f"[{filled_char * filled}{empty_char * empty}] {item.completion_percent}"
+
+
 def _priority_text(item: Task | TaskGroup) -> str:
     if item.priority == OPTIONAL_TASK:
         return "?"
@@ -729,6 +742,41 @@ def _priority_text(item: Task | TaskGroup) -> str:
     if item.priority > 0:
         return f"^{item.priority}"
     return ""
+
+
+def _milestone_text(item: Task | TaskGroup) -> str:
+    if item.milestone == NO_MILESTONE:
+        return ""
+    if ENABLE_TUI_ROMAN_MILESTONES:
+        return _roman_milestone(item.milestone)
+    return str(item.milestone)
+
+
+def _roman_milestone(value: int) -> str:
+    if value <= 0 or value > 3999:
+        return str(value)
+    numerals = (
+        (1000, "M"),
+        (900, "CM"),
+        (500, "D"),
+        (400, "CD"),
+        (100, "C"),
+        (90, "XC"),
+        (50, "L"),
+        (40, "XL"),
+        (10, "X"),
+        (9, "IX"),
+        (5, "V"),
+        (4, "IV"),
+        (1, "I"),
+    )
+    result = ""
+    remaining = value
+    for number, numeral in numerals:
+        while remaining >= number:
+            result += numeral
+            remaining -= number
+    return result
 
 
 def _adjusted_priority(item: Task | TaskGroup, delta: int) -> int:

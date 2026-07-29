@@ -130,7 +130,10 @@ def create_editor_app(document: Document) -> Any:
             self.pending_save_format: str | None = None
 
         def compose(self) -> Any:
-            self.top_bar = static(_top_bar_text(self.document, self.state), id="top-bar")
+            self.top_bar = static(
+                _top_bar_renderable(self.document, self.state, text),
+                id="top-bar",
+            )
             yield self.top_bar
             table = RoadmapDataTable(id="roadmap-grid", zebra_stripes=True)
             table.cursor_type = "row"
@@ -880,7 +883,7 @@ def create_editor_app(document: Document) -> Any:
         def _refresh_top_bar(self) -> None:
             top_bar = self.top_bar or self.query_one("#top-bar", static)
             self.top_bar = top_bar
-            top_bar.update(_top_bar_text(self.document, self.state))
+            top_bar.update(_top_bar_renderable(self.document, self.state, text))
 
         def _set_message(self, message: str) -> None:
             message_bar = self.message_bar or self.query_one("#message-bar", static)
@@ -902,8 +905,20 @@ def create_editor_app(document: Document) -> Any:
 
 def _top_bar_text(document: Document, state: EditorState) -> str:
     path_text = str(document.path) if document.path is not None else "<UNNAMED>"
-    dirty_marker = " *" if state.dirty else ""
-    return f"{path_text} [{document.format}]{dirty_marker}"
+    dirty_text = "  [UNSAVED]" if state.dirty else ""
+    return f"PATH {path_text}  FORMAT {document.format}{dirty_text}"
+
+
+def _top_bar_renderable(document: Document, state: EditorState, text: Any) -> Any:
+    path_text = str(document.path) if document.path is not None else "<UNNAMED>"
+    bar = text()
+    bar.append("PATH ", style="bold cyan")
+    bar.append(path_text, style="white")
+    bar.append("  FORMAT ", style="bold cyan")
+    bar.append(document.format, style="magenta")
+    if state.dirty:
+        bar.append("  [UNSAVED]", style="bold orange1")
+    return bar
 
 
 def _populate_table(table: Any, state: EditorState, text: Any) -> None:
@@ -913,24 +928,48 @@ def _populate_table(table: Any, state: EditorState, text: Any) -> None:
     descriptions = _tree_descriptions(rows)
     for row in rows:
         table.add_row(
-            _styled_text(row.completion_text, row, text),
-            _styled_text(row.priority_text, row, text),
-            _styled_text(row.milestone_text, row, text),
-            _styled_text(row.order_text, row, text),
-            _styled_text(descriptions[row.path], row, text),
+            _styled_text(row.completion_text, row, text, cell="completion"),
+            _styled_text(row.priority_text, row, text, cell="priority"),
+            _styled_text(row.milestone_text, row, text, cell="milestone"),
+            _styled_text(row.order_text, row, text, cell="order"),
+            _styled_text(descriptions[row.path], row, text, cell="description"),
             key=str(row.path),
         )
 
 
-def _styled_text(value: str, row: EditorRow, text: Any) -> Any:
-    style = ""
-    if row.status == COMPLETED:
-        style = "dim"
-    elif row.status == ONGOING:
-        style = "yellow"
+def _styled_text(value: str, row: EditorRow, text: Any, *, cell: str) -> Any:
+    style = _priority_style(row) if _uses_priority_style(cell, row) else _row_style(row)
     if row.selected:
         style = f"{style} reverse".strip()
     return text(value, style=style)
+
+
+def _uses_priority_style(cell: str, row: EditorRow) -> bool:
+    if row.completed:
+        return False
+    return cell in {"priority", "milestone", "order", "description"} and (
+        row.item.optional or row.item.priority > 0
+    )
+
+
+def _row_style(row: EditorRow) -> str:
+    if row.status == COMPLETED:
+        return "dim"
+    if row.status == ONGOING:
+        return "yellow"
+    return ""
+
+
+def _priority_style(row: EditorRow) -> str:
+    if row.item.optional:
+        return "cyan"
+    if row.item.priority >= 667:
+        return "red"
+    if row.item.priority >= 334:
+        return "yellow"
+    if row.item.priority > 0:
+        return "green"
+    return _row_style(row)
 
 
 def _tree_description(row: EditorRow, rows: list[EditorRow] | None = None) -> str:
