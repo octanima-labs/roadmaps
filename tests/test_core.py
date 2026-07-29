@@ -5,6 +5,8 @@ import pytest
 from roadmaps import (
     COMPLETED,
     DEFAULT_PRIORITY,
+    DEFAULT_TASK_DESCRIPTION,
+    DEFAULT_TASK_GROUP_DESCRIPTION,
     MAX_PRIORITY,
     NOT_STARTED,
     ONGOING,
@@ -402,6 +404,21 @@ def test_task_to_group_preserves_metadata_and_drops_completion() -> None:
     assert group.tasks == [child]
 
 
+@pytest.mark.parametrize("description", ["", None])
+def test_task_to_group_uses_default_description_for_invalid_source_description(
+    description: object,
+) -> None:
+    task = Task("original", order=2, priority=MAX_PRIORITY, milestone=3)
+    task.description = description  # type: ignore[assignment]
+
+    group = task.to_group()
+
+    assert group.description == DEFAULT_TASK_GROUP_DESCRIPTION
+    assert group.order == 2
+    assert group.priority == MAX_PRIORITY
+    assert group.milestone == 3
+
+
 def test_group_to_task_preserves_metadata_and_uses_derived_status() -> None:
     group = TaskGroup(
         "group",
@@ -419,6 +436,36 @@ def test_group_to_task_preserves_metadata_and_uses_derived_status() -> None:
     assert task.status == ONGOING
     assert task.completion == 0.0
     assert task.milestone == 2
+
+
+@pytest.mark.parametrize("description", ["", None])
+def test_group_to_task_uses_default_description_for_invalid_source_description(
+    description: object,
+) -> None:
+    group = TaskGroup("group", order=2, priority=MAX_PRIORITY, milestone=3)
+    group.description = description  # type: ignore[assignment]
+
+    task = group.to_task()
+
+    assert task.description == DEFAULT_TASK_DESCRIPTION
+    assert task.order == 2
+    assert task.priority == MAX_PRIORITY
+    assert task.milestone == 3
+
+
+@pytest.mark.parametrize("description", ["", None])
+def test_roadmap_group_to_task_repairs_invalid_group_description(
+    description: object,
+) -> None:
+    group = TaskGroup("group", order=2, tasks=[Task("child")])
+    group.description = description  # type: ignore[assignment]
+    roadmap = Roadmap([group])
+
+    task = roadmap.group_to_task(group)
+
+    assert task.description == DEFAULT_TASK_DESCRIPTION
+    assert task.order == 2
+    assert roadmap.steps == [task, Task("child")]
 
 
 def test_roadmap_task_to_group_replaces_nested_task_by_identity() -> None:

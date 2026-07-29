@@ -17,6 +17,8 @@ from roadmaps._validation import (
 from roadmaps.constants import (
     COMPLETED,
     DEFAULT_PRIORITY,
+    DEFAULT_TASK_DESCRIPTION,
+    DEFAULT_TASK_GROUP_DESCRIPTION,
     NO_MILESTONE,
     NOT_STARTED,
     ONGOING,
@@ -190,7 +192,7 @@ class Task:
         tasks: Iterable[Task | TaskGroup] | None = None,
     ) -> TaskGroup:
         return TaskGroup(
-            self.description,
+            _description_or_default_group(self.description),
             order=self.order,
             priority=self.priority,
             optional=self.optional,
@@ -357,7 +359,7 @@ class TaskGroup(Task):
 
     def to_task(self) -> Task:
         return Task(
-            self.description,
+            _description_or_default_task(self.description),
             order=self.order,
             priority=self.priority,
             status=self.status,
@@ -671,6 +673,18 @@ def _next_tasks(tasks: Iterable[Task], count: int) -> list[Task]:
         key=_next_step_key,
     )
     return ranked[:count]
+
+
+def _description_or_default_group(description: object) -> str:
+    if isinstance(description, str) and description.strip():
+        return description
+    return DEFAULT_TASK_GROUP_DESCRIPTION
+
+
+def _description_or_default_task(description: object) -> str:
+    if isinstance(description, str) and description.strip():
+        return description
+    return DEFAULT_TASK_DESCRIPTION
 
 
 def _validated_next_count(count: int) -> int:

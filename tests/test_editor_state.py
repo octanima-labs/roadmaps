@@ -3,6 +3,7 @@ import pytest
 from roadmaps import (
     COMPLETED,
     DEFAULT_PRIORITY,
+    DEFAULT_TASK_GROUP_DESCRIPTION,
     MAX_PRIORITY,
     NOT_STARTED,
     ONGOING,
@@ -855,6 +856,23 @@ def test_group_selected_rows_converts_single_focused_task() -> None:
     group = state.group_selected_rows()
 
     assert group == TaskGroup("task")
+    assert isinstance(state.roadmap.steps[0], TaskGroup)
+    assert state.selected_path == (0,)
+
+
+@pytest.mark.parametrize("description", ["", None])
+def test_group_selected_rows_repairs_invalid_focused_task_description(
+    description: object,
+) -> None:
+    task = Task("task", order=10)
+    task.description = description  # type: ignore[assignment]
+    state = EditorState(Roadmap([task]))
+
+    group = state.group_selected_rows()
+
+    assert group is not None
+    assert group.description == DEFAULT_TASK_GROUP_DESCRIPTION
+    assert group.order == 10
     assert isinstance(state.roadmap.steps[0], TaskGroup)
     assert state.selected_path == (0,)
 
