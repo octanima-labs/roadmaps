@@ -34,12 +34,15 @@ def run_editor(document: Document) -> int:
 
 def create_editor_app(document: Document) -> Any:
     textual_app = import_module("textual.app")
+    textual_containers = import_module("textual.containers")
     textual_widgets = import_module("textual.widgets")
     rich_text = import_module("rich.text")
     rich_style = import_module("rich.style")
     import_module("rich_gradient")
 
     app_base: Any = textual_app.App
+    center_middle: Any = textual_containers.CenterMiddle
+    vertical_scroll: Any = textual_containers.VerticalScroll
     data_table: Any = textual_widgets.DataTable
     input_widget: Any = textual_widgets.Input
     static: Any = textual_widgets.Static
@@ -86,8 +89,31 @@ def create_editor_app(document: Document) -> Any:
             height: 1;
             padding: 0 1;
         }
+
+        #cheatsheet-overlay {
+            display: none;
+            layer: overlay;
+            width: 100%;
+            height: 100%;
+            align: center middle;
+        }
+
+        #cheatsheet-panel {
+            width: 92%;
+            height: 88%;
+            padding: 1 2;
+            border: round $accent;
+            background: $surface;
+            color: $text;
+        }
+
+        #cheatsheet {
+            width: 100%;
+            height: auto;
+        }
         """
         BINDINGS = (
+            ("f1", "toggle_cheatsheet", "Help"),
             ("up", "cursor_up", "Up"),
             ("down", "cursor_down", "Down"),
             ("shift+up", "select_up", "Select up"),
@@ -131,6 +157,10 @@ def create_editor_app(document: Document) -> Any:
             self.top_bar: Any | None = None
             self.edit_input: Any | None = None
             self.message_bar: Any | None = None
+            self.cheatsheet: Any | None = None
+            self.cheatsheet_panel: Any | None = None
+            self.cheatsheet_overlay: Any | None = None
+            self.cheatsheet_visible = False
             self.editing = False
             self.prompt_kind: str | None = None
             self.completion_allow_start = False
@@ -154,6 +184,19 @@ def create_editor_app(document: Document) -> Any:
             yield self.edit_input
             self.message_bar = static("", id="message-bar")
             yield self.message_bar
+            self.cheatsheet = static(_cheatsheet_renderable(text), id="cheatsheet")
+            self.cheatsheet_panel = vertical_scroll(
+                self.cheatsheet,
+                id="cheatsheet-panel",
+            )
+            self.cheatsheet_overlay = center_middle(
+                self.cheatsheet_panel,
+                id="cheatsheet-overlay",
+            )
+            yield self.cheatsheet_overlay
+
+        def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
+            return not (self.cheatsheet_visible and action != "toggle_cheatsheet")
 
         def on_mount(self) -> None:
             table = self.table
@@ -179,6 +222,12 @@ def create_editor_app(document: Document) -> Any:
 
         def action_select_down(self) -> None:
             self._extend_selection(1)
+
+        def action_toggle_cheatsheet(self) -> None:
+            if self.cheatsheet_visible:
+                self._hide_cheatsheet()
+            else:
+                self._show_cheatsheet()
 
         def action_edit_description(self) -> None:
             self._cancel_prompt()
@@ -496,7 +545,9 @@ def create_editor_app(document: Document) -> Any:
                 stop()
 
         def key_escape(self) -> None:
-            if self.prompt_kind is not None:
+            if self.cheatsheet_visible:
+                self._hide_cheatsheet()
+            elif self.prompt_kind is not None:
                 self._cancel_prompt()
             elif self.editing:
                 self._exit_edit_mode(commit=False)
@@ -504,6 +555,19 @@ def create_editor_app(document: Document) -> Any:
                 self.state.clear_row_marks()
                 self._refresh_table()
                 self._set_message("row selection cleared")
+
+        def _show_cheatsheet(self) -> None:
+            cheatsheet = self._cheatsheet()
+            cheatsheet.update(_cheatsheet_renderable(text))
+            overlay = self._cheatsheet_overlay()
+            overlay.styles.display = "block"
+            self.cheatsheet_visible = True
+            self._cheatsheet_panel().focus()
+
+        def _hide_cheatsheet(self) -> None:
+            overlay = self._cheatsheet_overlay()
+            overlay.styles.display = "none"
+            self.cheatsheet_visible = False
 
         def _start_description_edit(self) -> None:
             row = self.state.selected_row
@@ -949,7 +1013,102 @@ def create_editor_app(document: Document) -> Any:
                 self.edit_input = self.query_one("#description-edit", input_widget)
             return self.edit_input
 
+        def _cheatsheet(self) -> Any:
+            if self.cheatsheet is None:
+                self.cheatsheet = self.query_one("#cheatsheet", static)
+            return self.cheatsheet
+
+        def _cheatsheet_overlay(self) -> Any:
+            if self.cheatsheet_overlay is None:
+                self.cheatsheet_overlay = self.query_one("#cheatsheet-overlay", center_middle)
+            return self.cheatsheet_overlay
+
+        def _cheatsheet_panel(self) -> Any:
+            if self.cheatsheet_panel is None:
+                self.cheatsheet_panel = self.query_one("#cheatsheet-panel", vertical_scroll)
+            return self.cheatsheet_panel
+
     return RoadmapEditorApp(document)
+
+
+_CHEATSHEET_GROUPS: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
+    (
+        "Navigation",
+        (
+            ("F1", "toggle this cheatsheet"),
+            ("Esc", "close cheatsheet, cancel edit, or clear marks"),
+            ("Up / Down", "move one row"),
+            ("Shift+Up / Shift+Down", "extend row selection"),
+            ("Space", "mark or unmark focused row"),
+            ("Enter", "edit focused description"),
+            ("Ctrl+H", "toggle completed rows"),
+        ),
+    ),
+    (
+        "Roadmap",
+        (
+            ("O", "insert unsorted sibling"),
+            ("U", "insert sorted sibling"),
+            ("Ctrl+U", "insert unsorted subtask"),
+            ("Ctrl+O", "insert sorted subtask"),
+            ("Ctrl+G", "group marked rows or convert task"),
+            ("Ctrl+T", "toggle focused group"),
+            ("Ctrl+Shift+T", "expand or collapse visible groups"),
+            ("Delete", "delete selected rows after confirmation"),
+            ("Ctrl+S", "save roadmap"),
+            ("Q", "quit editor"),
+        ),
+    ),
+    (
+        "Metadata",
+        (
+            ("M", "edit milestone"),
+            ("P", "edit priority or optionality"),
+            ("E", "edit explicit completion"),
+            ("Ctrl+Space", "cycle status"),
+        ),
+    ),
+    (
+        "Priority",
+        (
+            ("Alt+Up / Alt+Down", "adjust priority by one"),
+            ("Alt+Shift+Up / Alt+Shift+Down", "adjust priority by ten"),
+        ),
+    ),
+    (
+        "Completion",
+        (
+            ("+ / -", "adjust completion by one"),
+            ("] / [", "adjust completion by ten"),
+        ),
+    ),
+    (
+        "Sorting",
+        (
+            ("Ctrl+K / Ctrl+J", "move row up or down"),
+            ("> / <", "indent or outdent row"),
+        ),
+    ),
+    (
+        "Mouse",
+        (
+            ("Double click", "edit row description"),
+            ("Right click", "toggle focused group"),
+        ),
+    ),
+)
+
+
+def _cheatsheet_renderable(text: Any) -> Any:
+    cheatsheet = text()
+    cheatsheet.append("Roadmap Editor Shortcuts\n", style="bold cyan")
+    cheatsheet.append("F1 or Esc closes this panel.\n")
+    for group, shortcuts in _CHEATSHEET_GROUPS:
+        cheatsheet.append(f"\n{group}\n", style="bold magenta")
+        for key, description in shortcuts:
+            cheatsheet.append(f"  {key:<30}", style="bold yellow")
+            cheatsheet.append(f"{description}\n")
+    return cheatsheet
 
 
 def _top_bar_text(document: Document, state: EditorState) -> str:

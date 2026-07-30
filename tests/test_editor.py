@@ -20,6 +20,7 @@ from roadmaps import (
 )
 from roadmaps._documents import Document, load_document
 from roadmaps.editor import (
+    _cheatsheet_renderable,
     _priority_gradient_cell_colors,
     _priority_gradient_colors,
     _top_bar_renderable,
@@ -61,10 +62,15 @@ class FakeTable:
 
 class FakeStatic:
     def __init__(self) -> None:
-        self.value = ""
+        self.value: object = ""
+        self.styles = SimpleNamespace(display="none")
+        self.focused = False
 
-    def update(self, value: str) -> None:
+    def update(self, value: object) -> None:
         self.value = value
+
+    def focus(self) -> None:
+        self.focused = True
 
 
 class FakeInput:
@@ -82,6 +88,9 @@ def _wire_fake_widgets(app: Any) -> None:
     app.top_bar = FakeStatic()
     app.edit_input = FakeInput()
     app.message_bar = FakeStatic()
+    app.cheatsheet = FakeStatic()
+    app.cheatsheet_panel = FakeStatic()
+    app.cheatsheet_overlay = FakeStatic()
 
 
 def test_create_editor_app_wraps_document_and_state() -> None:
@@ -247,6 +256,68 @@ def test_save_prompt_parsers_accept_defaults_and_choices() -> None:
         parse_exit_save_prompt("maybe")
     with pytest.raises(ValueError, match="retry"):
         parse_save_failure_prompt("")
+
+
+def test_cheatsheet_renderable_lists_all_shortcut_groups() -> None:
+    renderable = _cheatsheet_renderable(Text)
+
+    assert "Roadmap Editor Shortcuts" in renderable.plain
+    assert "Navigation" in renderable.plain
+    assert "Roadmap" in renderable.plain
+    assert "Metadata" in renderable.plain
+    assert "Priority" in renderable.plain
+    assert "Completion" in renderable.plain
+    assert "Sorting" in renderable.plain
+    assert "Mouse" in renderable.plain
+    assert "F1" in renderable.plain
+    assert "Ctrl+S" in renderable.plain
+    assert "Delete" in renderable.plain
+
+
+def test_editor_f1_toggles_centered_cheatsheet() -> None:
+    app = create_editor_app(Document(Roadmap([Task("first")]), "text"))
+    _wire_fake_widgets(app)
+
+    app.action_toggle_cheatsheet()
+
+    assert app.cheatsheet_visible is True
+    assert app.cheatsheet_overlay.styles.display == "block"
+    assert app.cheatsheet_panel.focused is True
+    assert "Roadmap Editor Shortcuts" in app.cheatsheet.value.plain
+
+    app.action_toggle_cheatsheet()
+
+    assert app.cheatsheet_visible is False
+    assert app.cheatsheet_overlay.styles.display == "none"
+
+
+def test_editor_escape_closes_cheatsheet_before_active_prompt() -> None:
+    app = create_editor_app(Document(Roadmap([Task("first")]), "text"))
+    _wire_fake_widgets(app)
+    app.action_edit_priority()
+    app.edit_input.value = "^10"
+
+    app.action_toggle_cheatsheet()
+    app.key_escape()
+
+    assert app.cheatsheet_visible is False
+    assert app.prompt_kind == "priority"
+    assert app.edit_input.value == "^10"
+    assert app.edit_input.styles.display == "block"
+
+
+def test_editor_cheatsheet_opens_read_only_over_description_edit() -> None:
+    app = create_editor_app(Document(Roadmap([Task("first")]), "text"))
+    _wire_fake_widgets(app)
+    app._refresh_table()
+    app.action_edit_description()
+    app.edit_input.value = "draft"
+
+    app.action_toggle_cheatsheet()
+
+    assert app.cheatsheet_visible is True
+    assert app.editing is True
+    assert app.edit_input.value == "draft"
 
 
 def test_editor_actions_move_selection_and_toggle_completed_visibility() -> None:
@@ -1177,6 +1248,21 @@ def test_textual_pilot_table_enter_starts_description_editing() -> None:
 
             await pilot.press("escape")
             assert app.editing is False
+
+    asyncio.run(run_pilot())
+
+
+def test_textual_pilot_f1_toggles_cheatsheet() -> None:
+    pytest.importorskip("textual")
+    app = create_editor_app(Document(Roadmap([Task("first")]), "text"))
+
+    async def run_pilot() -> None:
+        async with app.run_test() as pilot:
+            await pilot.press("f1")
+            assert app.cheatsheet_visible is True
+
+            await pilot.press("escape")
+            assert app.cheatsheet_visible is False
 
     asyncio.run(run_pilot())
 
