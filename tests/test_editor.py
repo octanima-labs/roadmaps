@@ -20,6 +20,8 @@ from roadmaps import (
 )
 from roadmaps._documents import Document, load_document
 from roadmaps.editor import (
+    _priority_gradient_cell_colors,
+    _priority_gradient_colors,
     _top_bar_renderable,
     _top_bar_text,
     _tree_description,
@@ -205,17 +207,22 @@ def test_editor_table_styles_priority_and_completed_rows() -> None:
     _wire_fake_widgets(app)
     app._refresh_table()
 
-    assert "green" in str(app.table.rows[0][1].style)
-    assert "green" in str(app.table.rows[0][2].style)
-    assert "green" in str(app.table.rows[0][3].style)
-    assert "green" in str(app.table.rows[0][4].style)
-    assert "green" not in str(app.table.rows[0][0].style)
-    assert "yellow" in str(app.table.rows[1][1].style)
-    assert "red" in str(app.table.rows[2][1].style)
+    assert all(isinstance(app.table.rows[0][index], Text) for index in range(5))
+    assert all(isinstance(app.table.rows[1][index], Text) for index in range(5))
+    assert all(isinstance(app.table.rows[2][index], Text) for index in range(5))
+    assert app.table.rows[2][0].spans
+    assert all(span.style.color is not None for span in app.table.rows[2][0].spans)
+    assert all(span.style.bgcolor is None for span in app.table.rows[2][0].spans)
+    assert _priority_gradient_colors(app.state.rows[0]) == ["#22c55e", "#22c55e"]
+    assert _priority_gradient_colors(app.state.rows[2]) == ["#22c55e", "#facc15", "#ef4444"]
+    assert _priority_gradient_cell_colors(app.state.rows[2], 0)[0] == "#22c55e"
+    assert _priority_gradient_cell_colors(app.state.rows[2], 4)[1] == "#ef4444"
+    assert _priority_gradient_cell_colors(app.state.rows[2], 0) != _priority_gradient_cell_colors(app.state.rows[2], 4)
     assert "cyan" in str(app.table.rows[3][1].style)
     assert app.table.rows[5][1].plain == "?"
     assert all("dim" in str(app.table.rows[5][index].style) for index in range(1, 5))
     assert all("cyan" not in str(app.table.rows[5][index].style) for index in range(1, 5))
+    assert app.table.rows[4][1].spans == []
 
     app.state.selected_paths = {(4,)}
     app._refresh_table()

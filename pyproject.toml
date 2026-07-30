@@ -32,6 +32,7 @@ yaml = [
   "PyYAML",
 ]
 editor = [
+  "rich-gradient",
   "textual",
 ]
 
@@ -49,6 +50,7 @@ dev = [
   "mypy",
   "pytest",
   "PyYAML",
+  "rich-gradient",
   "ruff",
   "textual",
 ]
@@ -75,6 +77,7 @@ dependencies = [
   "mypy",
   "pytest",
   "PyYAML",
+  "rich-gradient",
   "ruff",
   "textual",
 ]

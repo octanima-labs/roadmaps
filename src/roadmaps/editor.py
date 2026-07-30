@@ -20,6 +20,11 @@ from roadmaps._editor_state import (
 )
 from roadmaps.constants import COMPLETED, NOT_STARTED, ONGOING
 
+_PRIORITY_GRADIENT_LOW = "#22c55e"
+_PRIORITY_GRADIENT_MID = "#facc15"
+_PRIORITY_GRADIENT_HIGH = "#ef4444"
+_TABLE_CELL_COUNT = 5
+
 
 def run_editor(document: Document) -> int:
     app = create_editor_app(document)
@@ -31,12 +36,15 @@ def create_editor_app(document: Document) -> Any:
     textual_app = import_module("textual.app")
     textual_widgets = import_module("textual.widgets")
     rich_text = import_module("rich.text")
+    rich_style = import_module("rich.style")
+    import_module("rich_gradient")
 
     app_base: Any = textual_app.App
     data_table: Any = textual_widgets.DataTable
     input_widget: Any = textual_widgets.Input
     static: Any = textual_widgets.Static
     text: Any = rich_text.Text
+    style_cls: Any = rich_style.Style
 
     class RoadmapDataTable(data_table):  # type: ignore[misc, valid-type]
         BINDINGS = (
@@ -867,7 +875,7 @@ def create_editor_app(document: Document) -> Any:
 
         def _refresh_table(self) -> None:
             self.state.repair_selection()
-            _populate_table(self._table(), self.state, text)
+            _populate_table(self._table(), self.state, text, style_cls)
             self._select_current_row()
             self._refresh_top_bar()
 
@@ -962,35 +970,73 @@ def _top_bar_renderable(document: Document, state: EditorState, text: Any) -> An
     return bar
 
 
-def _populate_table(table: Any, state: EditorState, text: Any) -> None:
+def _populate_table(table: Any, state: EditorState, text: Any, style_cls: Any) -> None:
     table.clear(columns=True)
     table.add_columns("Completion", "Priority", "Milestone", "Order", "Description")
     rows = state.rows
     descriptions = _tree_descriptions(rows)
     for row in rows:
         table.add_row(
-            _styled_text(row.completion_text, row, text, cell="completion"),
-            _styled_text(row.priority_text, row, text, cell="priority"),
-            _styled_text(row.milestone_text, row, text, cell="milestone"),
-            _styled_text(row.order_text, row, text, cell="order"),
-            _styled_text(descriptions[row.path], row, text, cell="description"),
+            _styled_text(row.completion_text, row, text, style_cls, cell="completion", cell_index=0),
+            _styled_text(row.priority_text, row, text, style_cls, cell="priority", cell_index=1),
+            _styled_text(row.milestone_text, row, text, style_cls, cell="milestone", cell_index=2),
+            _styled_text(row.order_text, row, text, style_cls, cell="order", cell_index=3),
+            _styled_text(
+                descriptions[row.path],
+                row,
+                text,
+                style_cls,
+                cell="description",
+                cell_index=4,
+            ),
             key=str(row.path),
         )
 
 
-def _styled_text(value: str, row: EditorRow, text: Any, *, cell: str) -> Any:
+def _styled_text(
+    value: str,
+    row: EditorRow,
+    text: Any,
+    style_cls: Any,
+    *,
+    cell: str,
+    cell_index: int,
+) -> Any:
+    if _uses_gradient_style(row):
+        return _foreground_gradient_text(value, row, text, style_cls, cell_index)
     style = _priority_style(row) if _uses_priority_style(cell, row) else _row_style(row)
     if row.selected:
         style = f"{style} reverse".strip()
     return text(value, style=style)
 
 
+def _foreground_gradient_text(
+    value: str,
+    row: EditorRow,
+    text: Any,
+    style_cls: Any,
+    cell_index: int,
+) -> Any:
+    rendered = text(value, style="reverse" if row.selected else "")
+    if not value:
+        return rendered
+
+    colors = _priority_gradient_cell_colors(row, cell_index)
+    denominator = max(len(value) - 1, 1)
+    for index, _character in enumerate(value):
+        color = _gradient_color_at(colors, index / denominator)
+        rendered.stylize(style_cls(color=color), index, index + 1)
+    return rendered
+
+
 def _uses_priority_style(cell: str, row: EditorRow) -> bool:
     if row.completed:
         return False
-    return cell in {"priority", "milestone", "order", "description"} and (
-        row.item.optional or row.item.priority > 0
-    )
+    return cell in {"priority", "milestone", "order", "description"} and row.item.optional
+
+
+def _uses_gradient_style(row: EditorRow) -> bool:
+    return not row.completed and not row.item.optional and row.item.priority > 0
 
 
 def _row_style(row: EditorRow) -> str:
@@ -1011,6 +1057,51 @@ def _priority_style(row: EditorRow) -> str:
     if row.item.priority > 0:
         return "green"
     return _row_style(row)
+
+
+def _priority_gradient_colors(row: EditorRow) -> list[str]:
+    from roadmaps.constants import MAX_PRIORITY
+
+    ratio = max(0.0, min(float(row.item.priority), float(MAX_PRIORITY))) / float(MAX_PRIORITY)
+    if ratio <= 0.5:
+        return [_PRIORITY_GRADIENT_LOW, _interpolate_hex(_PRIORITY_GRADIENT_LOW, _PRIORITY_GRADIENT_MID, ratio * 2.0)]
+    return [
+        _PRIORITY_GRADIENT_LOW,
+        _PRIORITY_GRADIENT_MID,
+        _interpolate_hex(_PRIORITY_GRADIENT_MID, _PRIORITY_GRADIENT_HIGH, (ratio - 0.5) * 2.0),
+    ]
+
+
+def _priority_gradient_cell_colors(row: EditorRow, cell_index: int) -> list[str]:
+    start = cell_index / _TABLE_CELL_COUNT
+    end = (cell_index + 1) / _TABLE_CELL_COUNT
+    row_colors = _priority_gradient_colors(row)
+    return [
+        _gradient_color_at(row_colors, start),
+        _gradient_color_at(row_colors, end),
+    ]
+
+
+def _gradient_color_at(colors: list[str], position: float) -> str:
+    if len(colors) == 1:
+        return colors[0]
+    position = max(0.0, min(position, 1.0))
+    scaled = position * (len(colors) - 1)
+    index = min(int(scaled), len(colors) - 2)
+    return _interpolate_hex(colors[index], colors[index + 1], scaled - index)
+
+
+def _interpolate_hex(start: str, end: str, ratio: float) -> str:
+    ratio = max(0.0, min(ratio, 1.0))
+    start_rgb = _hex_to_rgb(start)
+    end_rgb = _hex_to_rgb(end)
+    channels = [round(start_channel + (end_channel - start_channel) * ratio) for start_channel, end_channel in zip(start_rgb, end_rgb, strict=True)]
+    return "#" + "".join(f"{channel:02x}" for channel in channels)
+
+
+def _hex_to_rgb(value: str) -> tuple[int, int, int]:
+    text_value = value.removeprefix("#")
+    return (int(text_value[0:2], 16), int(text_value[2:4], 16), int(text_value[4:6], 16))
 
 
 def _tree_description(row: EditorRow, rows: list[EditorRow] | None = None) -> str:
