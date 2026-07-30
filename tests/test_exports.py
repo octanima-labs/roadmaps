@@ -12,6 +12,8 @@ from roadmaps import (
     NOT_STARTED,
     ONGOING,
     OPTIONAL_TASK,
+    TUI_NOTIFICATION_MAX_LINES,
+    TUI_NOTIFICATION_WIDTH,
     TUI_PROGRESS_BAR_WIDTH,
     TUI_TABLE_ROW_HEIGHT,
     UNSORTED,
@@ -49,6 +51,10 @@ from roadmaps.constants import NO_MILESTONE as ConstantsNoMilestone
 from roadmaps.constants import NOT_STARTED as ConstantsNotStarted
 from roadmaps.constants import ONGOING as ConstantsOngoing
 from roadmaps.constants import OPTIONAL_TASK as ConstantsOptionalTask
+from roadmaps.constants import (
+    TUI_NOTIFICATION_MAX_LINES as ConstantsTuiNotificationMaxLines,
+)
+from roadmaps.constants import TUI_NOTIFICATION_WIDTH as ConstantsTuiNotificationWidth
 from roadmaps.constants import TUI_PROGRESS_BAR_WIDTH as ConstantsTuiProgressBarWidth
 from roadmaps.constants import TUI_TABLE_ROW_HEIGHT as ConstantsTuiTableRowHeight
 from roadmaps.constants import UNSORTED as ConstantsUnsorted
@@ -95,6 +101,8 @@ def test_constants_are_shared_across_import_surfaces() -> None:
     assert NOT_STARTED is ConstantsNotStarted
     assert ONGOING is ConstantsOngoing
     assert OPTIONAL_TASK is ConstantsOptionalTask
+    assert TUI_NOTIFICATION_MAX_LINES is ConstantsTuiNotificationMaxLines
+    assert TUI_NOTIFICATION_WIDTH is ConstantsTuiNotificationWidth
     assert TUI_PROGRESS_BAR_WIDTH is ConstantsTuiProgressBarWidth
     assert TUI_TABLE_ROW_HEIGHT is ConstantsTuiTableRowHeight
     assert UNSORTED is ConstantsUnsorted

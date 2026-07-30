@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import textwrap
 from dataclasses import dataclass
 from importlib import import_module
 from pathlib import Path
@@ -25,9 +26,11 @@ from roadmaps.constants import (
     ONGOING,
     TUI_NOTIFICATION_ERROR_TIMEOUT_SECONDS,
     TUI_NOTIFICATION_INFO_TIMEOUT_SECONDS,
+    TUI_NOTIFICATION_MAX_LINES,
     TUI_NOTIFICATION_MAX_VISIBLE,
     TUI_NOTIFICATION_SUCCESS_TIMEOUT_SECONDS,
     TUI_NOTIFICATION_WARNING_TIMEOUT_SECONDS,
+    TUI_NOTIFICATION_WIDTH,
     TUI_TABLE_ROW_HEIGHT,
 )
 
@@ -35,8 +38,6 @@ _PRIORITY_GRADIENT_LOW = "#22c55e"
 _PRIORITY_GRADIENT_MID = "#facc15"
 _PRIORITY_GRADIENT_HIGH = "#ef4444"
 _TABLE_CELL_COUNT = 5
-_NOTIFICATION_WIDTH = 60
-_NOTIFICATION_MESSAGE_WIDTH = _NOTIFICATION_WIDTH - 4
 
 NotificationSeverity = str
 
@@ -115,8 +116,8 @@ def create_editor_app(document: Document) -> Any:
         .notification-toast {
             display: none;
             layer: notifications;
-            width: 60;
-            height: 1;
+            width: 32;
+            height: 2;
         }
 
         #cheatsheet-overlay {
@@ -1142,7 +1143,9 @@ def create_editor_app(document: Document) -> Any:
                     continue
                 notification = self.visible_notifications[index]
                 slot.styles.display = "block"
-                slot.styles.offset = (_notification_offset_x(self.size.width), 1 + index * 2)
+                slot.styles.width = _notification_width()
+                slot.styles.height = _notification_height()
+                slot.styles.offset = (_notification_offset_x(self.size.width), _notification_offset_y(index))
                 slot.update(_notification_renderable(text, notification))
 
         def _table(self) -> Any:
@@ -1264,16 +1267,37 @@ def _cheatsheet_renderable(text: Any) -> Any:
 def _notification_renderable(text: Any, notification: _Notification) -> Any:
     renderable = text()
     border_style = f"bold {_notification_color(notification.severity)}"
-    renderable.append("│", style=border_style)
-    renderable.append(f" {_notification_display_message(notification.message)} ")
-    renderable.append("│", style=border_style)
+    lines = _notification_display_lines(notification.message)
+    for index, line in enumerate(lines):
+        renderable.append("│", style=border_style)
+        renderable.append(f" {line} ")
+        renderable.append("│", style=border_style)
+        if index < len(lines) - 1:
+            renderable.append("\n")
     return renderable
 
 
-def _notification_display_message(message: str) -> str:
-    if len(message) <= _NOTIFICATION_MESSAGE_WIDTH:
-        return message
-    return f"{message[: _NOTIFICATION_MESSAGE_WIDTH - 3]}..."
+def _notification_display_lines(message: str) -> list[str]:
+    message_width = _notification_message_width()
+    max_lines = _notification_height()
+    lines = textwrap.wrap(
+        message,
+        width=message_width,
+        break_long_words=True,
+        break_on_hyphens=False,
+    ) or [""]
+    if len(lines) > max_lines:
+        lines = lines[:max_lines]
+        lines[-1] = _ellipsize_notification_line(lines[-1], message_width)
+    padded = [line.ljust(message_width) for line in lines]
+    padded.extend(" " * message_width for _line in range(max_lines - len(padded)))
+    return padded
+
+
+def _ellipsize_notification_line(line: str, width: int) -> str:
+    if width <= 3:
+        return "." * width
+    return f"{line[: width - 3]}..."
 
 
 def _notification_color(severity: NotificationSeverity) -> str:
@@ -1297,7 +1321,23 @@ def _notification_timeout(severity: NotificationSeverity) -> float:
 
 
 def _notification_offset_x(width: int) -> int:
-    return max(0, width - (_NOTIFICATION_WIDTH + 2))
+    return max(0, width - (_notification_width() + 2))
+
+
+def _notification_offset_y(index: int) -> int:
+    return 1 + index * (_notification_height() + 1)
+
+
+def _notification_width() -> int:
+    return max(TUI_NOTIFICATION_WIDTH, 4)
+
+
+def _notification_height() -> int:
+    return max(TUI_NOTIFICATION_MAX_LINES, 1)
+
+
+def _notification_message_width() -> int:
+    return max(_notification_width() - 4, 1)
 
 
 def _top_bar_text(document: Document, state: EditorState) -> str:

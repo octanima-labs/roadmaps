@@ -21,7 +21,9 @@ from roadmaps import (
 from roadmaps._documents import Document, load_document
 from roadmaps.editor import (
     _cheatsheet_renderable,
+    _notification_display_lines,
     _notification_offset_x,
+    _notification_offset_y,
     _priority_gradient_cell_colors,
     _priority_gradient_colors,
     _top_bar_renderable,
@@ -104,7 +106,11 @@ def _toast_text(app: Any) -> str:
         value = slot.value
         plain = value.plain if hasattr(value, "plain") else str(value)
         if plain:
-            values.append(plain)
+            lines = plain.splitlines()
+            if lines and all(line.startswith("│ ") and line.endswith(" │") for line in lines):
+                values.append(" ".join(line[2:-2].strip() for line in lines if line[2:-2].strip()))
+            else:
+                values.append(plain)
     return "\n".join(values)
 
 
@@ -347,8 +353,21 @@ def test_editor_notifications_render_severity_colors_and_clear_idle_bar() -> Non
 
     assert app.message_bar.value == ""
     assert all(slot.styles.display == "block" for slot in app.notification_slots)
-    assert _toast_text(app) == "│ saved │\n│ info │\n│ careful │"
-    assert all("\n" not in slot.value.plain for slot in app.notification_slots)
+    assert [slot.value.plain for slot in app.notification_slots] == [
+        (
+            "│ saved                        │\n"
+            "│                              │"
+        ),
+        (
+            "│ info                         │\n"
+            "│                              │"
+        ),
+        (
+            "│ careful                      │\n"
+            "│                              │"
+        ),
+    ]
+    assert all(slot.value.plain.count("\n") == 1 for slot in app.notification_slots)
     spans = [span for slot in app.notification_slots for span in slot.value.spans]
     styles = [str(span.style) for span in spans]
     assert any("green" in style for style in styles)
@@ -358,9 +377,36 @@ def test_editor_notifications_render_severity_colors_and_clear_idle_bar() -> Non
     assert all(str(span.style) == "none" for span in message_spans)
 
 
+def test_notification_rendered_slots_have_fixed_width_and_height() -> None:
+    app = create_editor_app(Document(Roadmap([Task("first")]), "text"))
+    _wire_fake_widgets(app)
+
+    app._notify_info("saved")
+
+    assert app.notification_slots[0].styles.width == 32
+    assert app.notification_slots[0].styles.height == 2
+    assert app.notification_slots[0].styles.offset == (_notification_offset_x(app.size.width), 1)
+    assert app.notification_slots[0].value.plain == (
+        "│ saved                        │\n"
+        "│                              │"
+    )
+
+
 def test_notification_offset_positions_stack_top_right_without_fullscreen_overlay() -> None:
-    assert _notification_offset_x(100) == 38
+    assert _notification_offset_x(100) == 66
     assert _notification_offset_x(30) == 0
+    assert [_notification_offset_y(index) for index in range(3)] == [1, 4, 7]
+
+
+def test_notification_display_lines_pad_and_wrap_long_messages() -> None:
+    assert _notification_display_lines("saved") == [
+        "saved" + " " * 23,
+        " " * 28,
+    ]
+    assert _notification_display_lines("x" * 80) == [
+        "x" * 28,
+        "x" * 25 + "...",
+    ]
 
 
 def test_editor_notifications_replace_oldest_after_three_visible() -> None:
@@ -377,7 +423,7 @@ def test_editor_notifications_replace_oldest_after_three_visible() -> None:
         "three",
         "four",
     ]
-    assert _toast_text(app) == "│ two │\n│ three │\n│ four │"
+    assert _toast_text(app) == "two\nthree\nfour"
 
 
 def test_editor_prompt_validation_error_uses_toast_and_keeps_prompt_active() -> None:
