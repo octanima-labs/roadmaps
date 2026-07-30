@@ -17,6 +17,7 @@ from .constants import (
     TUI_NOTIFICATION_SUCCESS_TIMEOUT_SECONDS,
     TUI_NOTIFICATION_WARNING_TIMEOUT_SECONDS,
     TUI_PROGRESS_BAR_WIDTH,
+    TUI_TABLE_ROW_HEIGHT,
     UNSORTED,
 )
 from .model import Roadmap, Task, TaskGroup
@@ -48,6 +49,7 @@ __all__ = [
     "TUI_NOTIFICATION_SUCCESS_TIMEOUT_SECONDS",
     "TUI_NOTIFICATION_WARNING_TIMEOUT_SECONDS",
     "TUI_PROGRESS_BAR_WIDTH",
+    "TUI_TABLE_ROW_HEIGHT",
     "UNSORTED",
     "JSONValidationError",
     "JsonSerializer",

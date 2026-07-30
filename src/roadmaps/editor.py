@@ -28,6 +28,7 @@ from roadmaps.constants import (
     TUI_NOTIFICATION_MAX_VISIBLE,
     TUI_NOTIFICATION_SUCCESS_TIMEOUT_SECONDS,
     TUI_NOTIFICATION_WARNING_TIMEOUT_SECONDS,
+    TUI_TABLE_ROW_HEIGHT,
 )
 
 _PRIORITY_GRADIENT_LOW = "#22c55e"
@@ -1337,6 +1338,7 @@ def _populate_table(table: Any, state: EditorState, text: Any, style_cls: Any) -
                 cell_index=4,
             ),
             key=str(row.path),
+            height=max(TUI_TABLE_ROW_HEIGHT, 1),
         )
 
 

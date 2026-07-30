@@ -39,20 +39,23 @@ class FakeTable:
     def __init__(self) -> None:
         self.columns: list[str] = []
         self.rows: list[tuple[object, ...]] = []
+        self.row_heights: list[int | None] = []
         self.cursor_row = 0
         self.hover_row: int | None = None
         self.focused = False
 
     def clear(self, *, columns: bool = False) -> None:
         self.rows = []
+        self.row_heights = []
         if columns:
             self.columns = []
 
     def add_columns(self, *columns: str) -> None:
         self.columns.extend(columns)
 
-    def add_row(self, *cells: object, key: str) -> None:
+    def add_row(self, *cells: object, key: str, height: int | None = None) -> None:
         self.rows.append(cells)
+        self.row_heights.append(height)
 
     def move_cursor(self, *, row: int, animate: bool = False) -> None:
         self.cursor_row = row
@@ -204,6 +207,7 @@ def test_editor_table_uses_visual_polish_columns_and_selected_style() -> None:
     app.action_toggle_row_mark()
 
     assert app.table.columns == ["Completion", "Priority", "Milestone", "Order", "Description"]
+    assert app.table.row_heights == [2]
     assert app.table.rows[0][3].plain == "1"
     assert app.table.rows[0][4].plain == "* first"
     assert "reverse" in str(app.table.rows[0][4].style)
@@ -1348,10 +1352,10 @@ def test_textual_pilot_double_click_row_starts_description_editing() -> None:
 
     async def run_pilot() -> None:
         async with app.run_test(size=(80, 20)) as pilot:
-            await pilot.click("#roadmap-grid", offset=(20, 2))
+            await pilot.click("#roadmap-grid", offset=(20, 4))
             assert app.editing is False
 
-            await pilot.double_click("#roadmap-grid", offset=(20, 2))
+            await pilot.double_click("#roadmap-grid", offset=(20, 4))
             assert app.state.selected_path == (1,)
             assert app.editing is True
             assert app.edit_input.value == "second"

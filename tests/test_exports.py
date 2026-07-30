@@ -13,6 +13,7 @@ from roadmaps import (
     ONGOING,
     OPTIONAL_TASK,
     TUI_PROGRESS_BAR_WIDTH,
+    TUI_TABLE_ROW_HEIGHT,
     UNSORTED,
     JsonSerializer,
     JSONValidationError,
@@ -49,6 +50,7 @@ from roadmaps.constants import NOT_STARTED as ConstantsNotStarted
 from roadmaps.constants import ONGOING as ConstantsOngoing
 from roadmaps.constants import OPTIONAL_TASK as ConstantsOptionalTask
 from roadmaps.constants import TUI_PROGRESS_BAR_WIDTH as ConstantsTuiProgressBarWidth
+from roadmaps.constants import TUI_TABLE_ROW_HEIGHT as ConstantsTuiTableRowHeight
 from roadmaps.constants import UNSORTED as ConstantsUnsorted
 from roadmaps.model import Roadmap as ModelRoadmap
 from roadmaps.model import Task as ModelTask
@@ -94,4 +96,5 @@ def test_constants_are_shared_across_import_surfaces() -> None:
     assert ONGOING is ConstantsOngoing
     assert OPTIONAL_TASK is ConstantsOptionalTask
     assert TUI_PROGRESS_BAR_WIDTH is ConstantsTuiProgressBarWidth
+    assert TUI_TABLE_ROW_HEIGHT is ConstantsTuiTableRowHeight
     assert UNSORTED is ConstantsUnsorted
