@@ -21,6 +21,7 @@ from roadmaps import (
 from roadmaps._documents import Document, load_document
 from roadmaps.editor import (
     _cheatsheet_renderable,
+    _notification_offset_x,
     _priority_gradient_cell_colors,
     _priority_gradient_colors,
     _top_bar_renderable,
@@ -88,9 +89,20 @@ def _wire_fake_widgets(app: Any) -> None:
     app.top_bar = FakeStatic()
     app.edit_input = FakeInput()
     app.message_bar = FakeStatic()
+    app.notification_slots = [FakeStatic() for _ in range(3)]
     app.cheatsheet = FakeStatic()
     app.cheatsheet_panel = FakeStatic()
     app.cheatsheet_overlay = FakeStatic()
+
+
+def _toast_text(app: Any) -> str:
+    values = []
+    for slot in app.notification_slots:
+        value = slot.value
+        plain = value.plain if hasattr(value, "plain") else str(value)
+        if plain:
+            values.append(plain)
+    return "\n".join(values)
 
 
 def test_create_editor_app_wraps_document_and_state() -> None:
@@ -320,6 +332,69 @@ def test_editor_cheatsheet_opens_read_only_over_description_edit() -> None:
     assert app.edit_input.value == "draft"
 
 
+def test_editor_notifications_render_severity_colors_and_clear_idle_bar() -> None:
+    app = create_editor_app(Document(Roadmap([Task("first")]), "text"))
+    _wire_fake_widgets(app)
+    app.message_bar.update("old")
+
+    app._notify_success("saved")
+    app._notify_info("info")
+    app._notify_warning("careful")
+
+    assert app.message_bar.value == ""
+    assert all(slot.styles.display == "block" for slot in app.notification_slots)
+    assert _toast_text(app) == "│ saved │\n│ info │\n│ careful │"
+    assert all("\n" not in slot.value.plain for slot in app.notification_slots)
+    spans = [span for slot in app.notification_slots for span in slot.value.spans]
+    styles = [str(span.style) for span in spans]
+    assert any("green" in style for style in styles)
+    assert any("cyan" in style for style in styles)
+    assert any("yellow" in style for style in styles)
+    message_spans = [span for span in spans if span.end - span.start > 1]
+    assert all(str(span.style) == "none" for span in message_spans)
+
+
+def test_notification_offset_positions_stack_top_right_without_fullscreen_overlay() -> None:
+    assert _notification_offset_x(100) == 38
+    assert _notification_offset_x(30) == 0
+
+
+def test_editor_notifications_replace_oldest_after_three_visible() -> None:
+    app = create_editor_app(Document(Roadmap([Task("first")]), "text"))
+    _wire_fake_widgets(app)
+
+    app._notify_info("one")
+    app._notify_info("two")
+    app._notify_info("three")
+    app._notify_info("four")
+
+    assert [notification.message for notification in app.visible_notifications] == [
+        "two",
+        "three",
+        "four",
+    ]
+    assert _toast_text(app) == "│ two │\n│ three │\n│ four │"
+
+
+def test_editor_prompt_validation_error_uses_toast_and_keeps_prompt_active() -> None:
+    app = create_editor_app(Document(Roadmap([Task("first")]), "text"))
+    _wire_fake_widgets(app)
+    app._refresh_table()
+
+    app.action_edit_priority()
+    app.edit_input.value = "high"
+    app.on_input_submitted(SimpleNamespace(input=app.edit_input))
+
+    assert app.prompt_kind == "priority"
+    assert app.edit_input.styles.display == "block"
+    assert app.message_bar.value == "priority: enter !, ?, ^N, N, or empty to clear"
+    assert "priority" in _toast_text(app)
+    assert any(
+        "red" in str(span.style) and span.end - span.start == 1
+        for span in app.notification_slots[0].value.spans
+    )
+
+
 def test_editor_actions_move_selection_and_toggle_completed_visibility() -> None:
     app = create_editor_app(
         Document(Roadmap([Task("first"), Task("done", status=COMPLETED)]), "text")
@@ -335,7 +410,7 @@ def test_editor_actions_move_selection_and_toggle_completed_visibility() -> None
     assert app.state.hide_completed is True
     assert app.state.selected_path == (0,)
     assert app.table.cursor_row == 0
-    assert app.message_bar.value == "completed rows hidden"
+    assert "completed rows hidden" in _toast_text(app)
 
 
 def test_editor_insert_enters_description_edit_mode() -> None:
@@ -425,7 +500,7 @@ def test_editor_description_edit_commit_and_cancel() -> None:
     app._exit_edit_mode(commit=False)
 
     assert app.document.roadmap.steps[0].description == "updated"
-    assert app.message_bar.value == "edit cancelled"
+    assert "edit cancelled" in _toast_text(app)
 
 
 def test_editor_description_edit_rejects_blank_input() -> None:
@@ -441,7 +516,7 @@ def test_editor_description_edit_rejects_blank_input() -> None:
     assert app.state.dirty is False
     assert app.editing is True
     assert app.edit_input.styles.display == "block"
-    assert app.message_bar.value == "description must be a non-empty string"
+    assert "description must be a non-empty string" in _toast_text(app)
 
 
 @pytest.mark.parametrize(
@@ -489,7 +564,7 @@ def test_editor_milestone_prompt_updates_selected_item() -> None:
     assert app.state.dirty is True
     assert app.prompt_kind is None
     assert app.edit_input.styles.display == "none"
-    assert app.message_bar.value == "milestone updated"
+    assert "milestone updated" in _toast_text(app)
 
 
 def test_editor_priority_prompt_sets_optional_and_clears_priority() -> None:
@@ -510,7 +585,7 @@ def test_editor_priority_prompt_sets_optional_and_clears_priority() -> None:
 
     assert app.document.roadmap.steps[0].optional is False
     assert app.document.roadmap.steps[0].priority == 0
-    assert app.message_bar.value == "priority updated"
+    assert "priority updated" in _toast_text(app)
 
 
 def test_editor_completion_prompt_starts_pending_task_by_default() -> None:
@@ -533,7 +608,7 @@ def test_editor_completion_prompt_starts_pending_task_by_default() -> None:
     assert isinstance(task, Task)
     assert task.status == ONGOING
     assert task.completion == 75.0
-    assert app.message_bar.value == "completion updated"
+    assert "completion updated" in _toast_text(app)
 
 
 def test_editor_completion_prompt_keeps_completed_task_by_default() -> None:
@@ -551,7 +626,7 @@ def test_editor_completion_prompt_keeps_completed_task_by_default() -> None:
 
     assert task.status == COMPLETED
     assert app.prompt_kind is None
-    assert app.message_bar.value == "completion edit cancelled"
+    assert "completion edit cancelled" in _toast_text(app)
 
 
 def test_editor_completion_prompt_can_remove_completed_mark() -> None:
@@ -570,7 +645,7 @@ def test_editor_completion_prompt_can_remove_completed_mark() -> None:
 
     assert task.status == ONGOING
     assert task.completion == 0.0
-    assert app.message_bar.value == "completion updated"
+    assert "completion updated" in _toast_text(app)
 
 
 def test_editor_completion_shortcuts_adjust_ongoing_task() -> None:
@@ -581,7 +656,7 @@ def test_editor_completion_shortcuts_adjust_ongoing_task() -> None:
 
     app.action_increase_completion()
     assert task.completion == 51.0
-    assert app.message_bar.value == "completion updated"
+    assert "completion updated" in _toast_text(app)
 
     app.action_decrease_completion_large()
     assert task.completion == 41.0
@@ -610,7 +685,7 @@ def test_editor_increment_shortcut_starts_pending_task_by_default() -> None:
 
     assert task.status == ONGOING
     assert task.completion == 10.0
-    assert app.message_bar.value == "completion updated"
+    assert "completion updated" in _toast_text(app)
 
 
 def test_editor_completion_shortcut_can_complete_ongoing_task_by_default() -> None:
@@ -628,7 +703,7 @@ def test_editor_completion_shortcut_can_complete_ongoing_task_by_default() -> No
 
     assert task.status == COMPLETED
     assert task.completion == 100.0
-    assert app.message_bar.value == "completion updated"
+    assert "completion updated" in _toast_text(app)
 
 
 def test_editor_completed_decrement_shortcut_defaults_to_cancel() -> None:
@@ -645,7 +720,7 @@ def test_editor_completed_decrement_shortcut_defaults_to_cancel() -> None:
     app.on_input_submitted(SimpleNamespace(input=app.edit_input))
 
     assert task.status == COMPLETED
-    assert app.message_bar.value == "completion edit cancelled"
+    assert "completion edit cancelled" in _toast_text(app)
 
 
 def test_editor_completed_decrement_shortcut_applies_delta_after_confirmation() -> None:
@@ -660,7 +735,7 @@ def test_editor_completed_decrement_shortcut_applies_delta_after_confirmation() 
 
     assert task.status == ONGOING
     assert task.completion == 90.0
-    assert app.message_bar.value == "completion updated"
+    assert "completion updated" in _toast_text(app)
 
 
 def test_editor_completion_shortcut_noop_messages() -> None:
@@ -671,11 +746,11 @@ def test_editor_completion_shortcut_noop_messages() -> None:
     app._refresh_table()
 
     app.action_decrease_completion()
-    assert app.message_bar.value == "task is not started"
+    assert "task is not started" in _toast_text(app)
 
     app.action_cursor_down()
     app.action_decrease_completion()
-    assert app.message_bar.value == "completion editing is only available for leaf tasks"
+    assert "completion editing is only available for leaf tasks" in _toast_text(app)
 
 
 def test_editor_metadata_prompts_reject_completed_rows_and_groups() -> None:
@@ -694,13 +769,13 @@ def test_editor_metadata_prompts_reject_completed_rows_and_groups() -> None:
     app._refresh_table()
 
     app.action_edit_milestone()
-    assert app.message_bar.value == "completed rows are read-only"
+    assert "completed rows are read-only" in _toast_text(app)
     app.action_edit_priority()
-    assert app.message_bar.value == "completed rows are read-only"
+    assert "completed rows are read-only" in _toast_text(app)
 
     app.action_cursor_down()
     app.action_edit_completion()
-    assert app.message_bar.value == "completion editing is only available for leaf tasks"
+    assert "completion editing is only available for leaf tasks" in _toast_text(app)
 
 
 def test_editor_invalid_prompt_input_stays_open() -> None:
@@ -714,7 +789,7 @@ def test_editor_invalid_prompt_input_stays_open() -> None:
 
     assert app.prompt_kind == "priority"
     assert app.edit_input.styles.display == "block"
-    assert "priority" in app.message_bar.value
+    assert "priority" in _toast_text(app)
 
 
 def test_editor_rejects_completed_description_edit() -> None:
@@ -725,7 +800,7 @@ def test_editor_rejects_completed_description_edit() -> None:
     app.action_edit_description()
 
     assert app.editing is False
-    assert app.message_bar.value == "completed rows are read-only"
+    assert "completed rows are read-only" in _toast_text(app)
 
 
 def test_editor_cycle_status_refreshes_and_preserves_visible_selection() -> None:
@@ -739,7 +814,7 @@ def test_editor_cycle_status_refreshes_and_preserves_visible_selection() -> None
     assert app.document.roadmap.steps[1].status != 0
     assert app.state.selected_path == (1,)
     assert app.table.cursor_row == 1
-    assert app.message_bar.value == "status updated"
+    assert "status updated" in _toast_text(app)
 
 
 def test_editor_cycle_status_uses_visual_table_cursor_when_state_is_stale() -> None:
@@ -770,10 +845,10 @@ def test_editor_move_row_actions_refresh_selection_and_show_messages() -> None:
     ]
     assert app.state.selected_path == (0,)
     assert app.table.cursor_row == 0
-    assert app.message_bar.value == "row moved"
+    assert "row moved" in _toast_text(app)
 
     app.action_move_row_up()
-    assert app.message_bar.value == "already at top"
+    assert "already at top" in _toast_text(app)
 
     app.action_move_row_down()
     assert [step.description for step in app.document.roadmap.steps] == [
@@ -781,7 +856,7 @@ def test_editor_move_row_actions_refresh_selection_and_show_messages() -> None:
         "second",
     ]
     assert app.state.selected_path == (1,)
-    assert app.message_bar.value == "row moved"
+    assert "row moved" in _toast_text(app)
 
 
 def test_editor_indent_outdent_actions_refresh_selection_and_show_messages() -> None:
@@ -797,7 +872,7 @@ def test_editor_indent_outdent_actions_refresh_selection_and_show_messages() -> 
     assert [task.description for task in group.tasks] == ["child"]
     assert app.state.selected_path == (0, 0)
     assert app.table.cursor_row == 1
-    assert app.message_bar.value == "row indented"
+    assert "row indented" in _toast_text(app)
 
     app.action_outdent_row()
     assert [step.description for step in app.document.roadmap.steps] == [
@@ -805,10 +880,10 @@ def test_editor_indent_outdent_actions_refresh_selection_and_show_messages() -> 
         "child",
     ]
     assert app.state.selected_path == (1,)
-    assert app.message_bar.value == "row outdented"
+    assert "row outdented" in _toast_text(app)
 
     app.action_outdent_row()
-    assert app.message_bar.value == "already at top level"
+    assert "already at top level" in _toast_text(app)
 
 
 def test_editor_indent_first_visible_row_is_noop() -> None:
@@ -819,7 +894,7 @@ def test_editor_indent_first_visible_row_is_noop() -> None:
     app.action_indent_row()
 
     assert [step.description for step in app.document.roadmap.steps] == ["first", "second"]
-    assert app.message_bar.value == "cannot indent row"
+    assert "cannot indent row" in _toast_text(app)
 
 
 def test_editor_toggle_row_mark_updates_description_prefix() -> None:
@@ -831,7 +906,7 @@ def test_editor_toggle_row_mark_updates_description_prefix() -> None:
 
     assert app.state.selected_paths == {(0,)}
     assert app.table.rows[0][4].plain == "* first"
-    assert app.message_bar.value == "row selection toggled"
+    assert "row selection toggled" in _toast_text(app)
 
 
 def test_editor_shift_selection_and_escape_clear_marks() -> None:
@@ -845,7 +920,7 @@ def test_editor_shift_selection_and_escape_clear_marks() -> None:
     app.action_select_down()
     assert app.state.selected_path == (2,)
     assert app.state.selected_paths == {(1,), (2,)}
-    assert app.message_bar.value == "row selection extended"
+    assert "row selection extended" in _toast_text(app)
 
     app.action_select_down()
     assert app.state.selected_path == (3,)
@@ -853,7 +928,7 @@ def test_editor_shift_selection_and_escape_clear_marks() -> None:
 
     app.key_escape()
     assert app.state.selected_paths == set()
-    assert app.message_bar.value == "row selection cleared"
+    assert "row selection cleared" in _toast_text(app)
 
 
 def test_editor_priority_shortcuts_update_focus_or_marked_rows() -> None:
@@ -867,7 +942,7 @@ def test_editor_priority_shortcuts_update_focus_or_marked_rows() -> None:
     app.action_increase_priority()
     assert optional.optional is False
     assert optional.priority == DEFAULT_PRIORITY
-    assert app.message_bar.value == "priority updated"
+    assert "priority updated" in _toast_text(app)
 
     app.action_increase_priority()
     assert optional.priority == 1
@@ -915,7 +990,7 @@ def test_editor_group_selected_rows_rejects_different_parents() -> None:
 
     app.action_group_rows()
 
-    assert app.message_bar.value == "selected rows must share the same parent"
+    assert "selected rows must share the same parent" in _toast_text(app)
 
 
 def test_editor_group_single_task_converts_without_editing() -> None:
@@ -927,7 +1002,7 @@ def test_editor_group_single_task_converts_without_editing() -> None:
 
     assert isinstance(app.document.roadmap.steps[0], TaskGroup)
     assert app.editing is False
-    assert app.message_bar.value == "task converted to group"
+    assert "task converted to group" in _toast_text(app)
 
 
 def test_editor_toggle_group_collapsed_action_and_right_click() -> None:
@@ -940,7 +1015,7 @@ def test_editor_toggle_group_collapsed_action_and_right_click() -> None:
     app.action_toggle_group_collapsed()
     assert [row.description for row in app.state.rows] == ["group"]
     assert app.table.rows[0][4].plain == "▸ group"
-    assert app.message_bar.value == "group toggled"
+    assert "group toggled" in _toast_text(app)
 
     stopped: list[bool] = []
     app.on_mouse_down(
@@ -968,15 +1043,15 @@ def test_editor_toggle_all_group_collapsed_alternates_visible_groups() -> None:
 
     app.action_toggle_all_group_collapsed()
     assert [row.description for row in app.state.rows] == ["outer", "inner", "child"]
-    assert app.message_bar.value == "groups expanded"
+    assert "groups expanded" in _toast_text(app)
 
     app.action_toggle_all_group_collapsed()
     assert [row.description for row in app.state.rows] == ["outer"]
-    assert app.message_bar.value == "groups collapsed"
+    assert "groups collapsed" in _toast_text(app)
 
     app.action_toggle_all_group_collapsed()
     assert [row.description for row in app.state.rows] == ["outer", "inner"]
-    assert app.message_bar.value == "groups expanded"
+    assert "groups expanded" in _toast_text(app)
 
 
 def test_editor_delete_prompt_defaults_to_cancel() -> None:
@@ -994,7 +1069,7 @@ def test_editor_delete_prompt_defaults_to_cancel() -> None:
 
     assert [step.description for step in app.document.roadmap.steps] == ["first"]
     assert app.state.dirty is False
-    assert app.message_bar.value == "delete cancelled"
+    assert "delete cancelled" in _toast_text(app)
 
 
 def test_editor_delete_prompt_removes_focused_row_after_confirmation() -> None:
@@ -1009,7 +1084,7 @@ def test_editor_delete_prompt_removes_focused_row_after_confirmation() -> None:
     assert [step.description for step in app.document.roadmap.steps] == ["second"]
     assert app.state.dirty is True
     assert app.state.selected_path == (0,)
-    assert app.message_bar.value == "row deleted"
+    assert "row deleted" in _toast_text(app)
 
 
 def test_editor_delete_prompt_removes_marked_outer_rows_after_confirmation() -> None:
@@ -1027,7 +1102,7 @@ def test_editor_delete_prompt_removes_marked_outer_rows_after_confirmation() -> 
 
     assert app.document.roadmap.steps == []
     assert app.state.selected_paths == set()
-    assert app.message_bar.value == "2 rows deleted"
+    assert "2 rows deleted" in _toast_text(app)
 
 
 def test_editor_highlight_event_updates_internal_selection() -> None:
@@ -1050,7 +1125,7 @@ def test_editor_save_named_document_and_prompt_unnamed_save(tmp_path: Path) -> N
 
     assert path.read_text() == "- [ ] first"
     assert app.state.dirty is False
-    assert app.message_bar.value == "saved"
+    assert "saved" in _toast_text(app)
 
     unnamed = create_editor_app(Document(Roadmap([Task("first")]), "text"))
     _wire_fake_widgets(unnamed)
@@ -1082,7 +1157,7 @@ def test_editor_unnamed_save_unknown_extension_prompts_format_default_yaml(
     assert app.document.format == "yaml"
     assert app.document.exists is True
     assert app.state.dirty is False
-    assert app.message_bar.value == "saved"
+    assert "saved" in _toast_text(app)
 
 
 def test_editor_save_prompt_asks_before_overwriting_existing_file(tmp_path: Path) -> None:
@@ -1099,7 +1174,7 @@ def test_editor_save_prompt_asks_before_overwriting_existing_file(tmp_path: Path
     app.edit_input.value = ""
     app.on_input_submitted(SimpleNamespace(input=app.edit_input))
     assert path.read_text() == "- [ ] old"
-    assert app.message_bar.value == "save cancelled"
+    assert "save cancelled" in _toast_text(app)
 
     app.action_save()
     app.edit_input.value = str(path)
@@ -1108,7 +1183,7 @@ def test_editor_save_prompt_asks_before_overwriting_existing_file(tmp_path: Path
     app.on_input_submitted(SimpleNamespace(input=app.edit_input))
 
     assert path.read_text() == "- [ ] new"
-    assert app.message_bar.value == "saved"
+    assert "saved" in _toast_text(app)
 
 
 def test_editor_save_prompt_reports_missing_parent(tmp_path: Path) -> None:
@@ -1120,7 +1195,7 @@ def test_editor_save_prompt_reports_missing_parent(tmp_path: Path) -> None:
     app.edit_input.value = str(path)
     app.on_input_submitted(SimpleNamespace(input=app.edit_input))
 
-    assert "save failed" in app.message_bar.value
+    assert "save failed" in _toast_text(app)
     assert app.document.path is None
 
 
@@ -1154,7 +1229,7 @@ def test_editor_dirty_quit_can_discard_or_cancel(tmp_path: Path) -> None:
     app.edit_input.value = "c"
     app.on_input_submitted(SimpleNamespace(input=app.edit_input))
     assert exited == []
-    assert app.message_bar.value == "exit cancelled"
+    assert "exit cancelled" in _toast_text(app)
 
     app.action_quit()
     app.edit_input.value = "n"

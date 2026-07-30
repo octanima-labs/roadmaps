@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from importlib import import_module
 from pathlib import Path
 from typing import Any
@@ -18,12 +19,32 @@ from roadmaps._editor_state import (
     parse_milestone_prompt,
     parse_priority_prompt,
 )
-from roadmaps.constants import COMPLETED, NOT_STARTED, ONGOING
+from roadmaps.constants import (
+    COMPLETED,
+    NOT_STARTED,
+    ONGOING,
+    TUI_NOTIFICATION_ERROR_TIMEOUT_SECONDS,
+    TUI_NOTIFICATION_INFO_TIMEOUT_SECONDS,
+    TUI_NOTIFICATION_MAX_VISIBLE,
+    TUI_NOTIFICATION_SUCCESS_TIMEOUT_SECONDS,
+    TUI_NOTIFICATION_WARNING_TIMEOUT_SECONDS,
+)
 
 _PRIORITY_GRADIENT_LOW = "#22c55e"
 _PRIORITY_GRADIENT_MID = "#facc15"
 _PRIORITY_GRADIENT_HIGH = "#ef4444"
 _TABLE_CELL_COUNT = 5
+_NOTIFICATION_WIDTH = 60
+_NOTIFICATION_MESSAGE_WIDTH = _NOTIFICATION_WIDTH - 4
+
+NotificationSeverity = str
+
+
+@dataclass(frozen=True)
+class _Notification:
+    id: int
+    message: str
+    severity: NotificationSeverity
 
 
 def run_editor(document: Document) -> int:
@@ -88,6 +109,13 @@ def create_editor_app(document: Document) -> Any:
         #message-bar {
             height: 1;
             padding: 0 1;
+        }
+
+        .notification-toast {
+            display: none;
+            layer: notifications;
+            width: 60;
+            height: 1;
         }
 
         #cheatsheet-overlay {
@@ -157,6 +185,9 @@ def create_editor_app(document: Document) -> Any:
             self.top_bar: Any | None = None
             self.edit_input: Any | None = None
             self.message_bar: Any | None = None
+            self.notification_slots: list[Any] = []
+            self.visible_notifications: list[_Notification] = []
+            self.next_notification_id = 1
             self.cheatsheet: Any | None = None
             self.cheatsheet_panel: Any | None = None
             self.cheatsheet_overlay: Any | None = None
@@ -184,6 +215,11 @@ def create_editor_app(document: Document) -> Any:
             yield self.edit_input
             self.message_bar = static("", id="message-bar")
             yield self.message_bar
+            self.notification_slots = [
+                static("", id=f"notification-{index}", classes="notification-toast")
+                for index in range(TUI_NOTIFICATION_MAX_VISIBLE)
+            ]
+            yield from self.notification_slots
             self.cheatsheet = static(_cheatsheet_renderable(text), id="cheatsheet")
             self.cheatsheet_panel = vertical_scroll(
                 self.cheatsheet,
@@ -583,7 +619,7 @@ def create_editor_app(document: Document) -> Any:
             edit_input.styles.display = "block"
             edit_input.focus()
             self.editing = True
-            self._set_message("editing description")
+            self._set_prompt_message("editing description")
 
         def _start_prompt(
             self,
@@ -596,7 +632,7 @@ def create_editor_app(document: Document) -> Any:
             edit_input.value = value
             edit_input.styles.display = "block"
             edit_input.focus()
-            self._set_message(message)
+            self._set_prompt_message(message)
 
         def _start_completion_prompt(
             self,
@@ -694,7 +730,7 @@ def create_editor_app(document: Document) -> Any:
                     else:
                         self._quit_app()
             except ValueError as exc:
-                self._set_message(str(exc))
+                self._notify_error(str(exc))
 
         def _adjust_completion_shortcut(self, delta: float) -> None:
             if self.prompt_kind is not None or self.editing:
@@ -895,7 +931,7 @@ def create_editor_app(document: Document) -> Any:
                 self.save_after_prompt_quit = False
             self._refresh_table()
             self._table().focus()
-            self._set_message(message)
+            self._notify_for_message(message)
 
         def _cancel_prompt(self) -> None:
             if self.prompt_kind is None:
@@ -911,7 +947,7 @@ def create_editor_app(document: Document) -> Any:
             self.pending_save_path = None
             self.pending_save_format = None
             self._table().focus()
-            self._set_message("edit cancelled")
+            self._notify_info("edit cancelled")
 
         def _exit_edit_mode(self, *, commit: bool) -> None:
             if not self.editing:
@@ -922,15 +958,15 @@ def create_editor_app(document: Document) -> Any:
                 try:
                     changed = self.state.update_selected_description(edit_input.value)
                 except ValueError as exc:
-                    self._set_message(str(exc))
+                    self._notify_error(str(exc))
                     return
                 if changed:
                     self._refresh_table()
-                    self._set_message("description updated")
+                    self._notify_success("description updated")
                 else:
-                    self._set_message("description unchanged")
+                    self._notify_info("description unchanged")
             else:
-                self._set_message("edit cancelled")
+                self._notify_info("edit cancelled")
 
             edit_input.styles.display = "none"
             edit_input.value = ""
@@ -998,15 +1034,128 @@ def create_editor_app(document: Document) -> Any:
             self.top_bar = top_bar
             top_bar.update(_top_bar_renderable(self.document, self.state, text))
 
-        def _set_message(self, message: str) -> None:
+        def _set_message(self, message: str, severity: NotificationSeverity | None = None) -> None:
+            if severity is None:
+                self._notify_for_message(message)
+            else:
+                self._notify(message, severity)
+
+        def _set_prompt_message(self, message: str) -> None:
             message_bar = self.message_bar or self.query_one("#message-bar", static)
             self.message_bar = message_bar
             message_bar.update(message)
+
+        def _clear_prompt_message(self) -> None:
+            self._set_prompt_message("")
+
+        def _notify_success(self, message: str) -> None:
+            self._notify(message, "success")
+
+        def _notify_info(self, message: str) -> None:
+            self._notify(message, "info")
+
+        def _notify_warning(self, message: str) -> None:
+            self._notify(message, "warning")
+
+        def _notify_error(self, message: str) -> None:
+            self._notify(message, "error")
+
+        def _notify_for_message(self, message: str) -> None:
+            lowered = message.casefold()
+            if any(token in lowered for token in ("error", "failed", "must", "invalid")):
+                self._notify_error(message)
+            elif any(
+                token in lowered
+                for token in (
+                    "no row",
+                    "read-only",
+                    "only available",
+                    "not started",
+                    "already",
+                    "cannot",
+                    "boundary",
+                )
+            ):
+                self._notify_warning(message)
+            elif any(
+                token in lowered
+                for token in (
+                    "updated",
+                    "saved",
+                    "deleted",
+                    "moved",
+                    "grouped",
+                    "converted",
+                    "toggled",
+                    "indented",
+                    "outdented",
+                    "hidden",
+                    "visible",
+                    "expanded",
+                    "collapsed",
+                )
+            ):
+                self._notify_success(message)
+            else:
+                self._notify_info(message)
+
+        def _notify(self, message: str, severity: NotificationSeverity) -> None:
+            if self.prompt_kind is None and not self.editing:
+                self._clear_prompt_message()
+            notification = _Notification(self.next_notification_id, message, severity)
+            self.next_notification_id += 1
+            if len(self.visible_notifications) >= TUI_NOTIFICATION_MAX_VISIBLE:
+                self.visible_notifications.pop(0)
+            self._show_notification(notification)
+            self._refresh_notifications()
+
+        def _show_notification(self, notification: _Notification) -> None:
+            self.visible_notifications.append(notification)
+            try:
+                import asyncio
+
+                asyncio.get_running_loop()
+            except RuntimeError:
+                return
+            self.set_timer(
+                _notification_timeout(notification.severity),
+                lambda: self._dismiss_notification(notification.id),
+            )
+
+        def _dismiss_notification(self, notification_id: int) -> None:
+            before = len(self.visible_notifications)
+            self.visible_notifications = [
+                notification
+                for notification in self.visible_notifications
+                if notification.id != notification_id
+            ]
+            if len(self.visible_notifications) == before:
+                return
+            self._refresh_notifications()
+
+        def _refresh_notifications(self) -> None:
+            for index, slot in enumerate(self._notification_slots()):
+                if index >= len(self.visible_notifications):
+                    slot.styles.display = "none"
+                    slot.update("")
+                    continue
+                notification = self.visible_notifications[index]
+                slot.styles.display = "block"
+                slot.styles.offset = (_notification_offset_x(self.size.width), 1 + index * 2)
+                slot.update(_notification_renderable(text, notification))
 
         def _table(self) -> Any:
             if self.table is None:
                 self.table = self.query_one("#roadmap-grid", data_table)
             return self.table
+
+        def _notification_slots(self) -> list[Any]:
+            if not self.notification_slots:
+                self.notification_slots = [
+                    self.query_one(f"#notification-{index}", static)
+                    for index in range(TUI_NOTIFICATION_MAX_VISIBLE)
+                ]
+            return self.notification_slots
 
         def _edit_input(self) -> Any:
             if self.edit_input is None:
@@ -1109,6 +1258,45 @@ def _cheatsheet_renderable(text: Any) -> Any:
             cheatsheet.append(f"  {key:<30}", style="bold yellow")
             cheatsheet.append(f"{description}\n")
     return cheatsheet
+
+
+def _notification_renderable(text: Any, notification: _Notification) -> Any:
+    renderable = text()
+    border_style = f"bold {_notification_color(notification.severity)}"
+    renderable.append("│", style=border_style)
+    renderable.append(f" {_notification_display_message(notification.message)} ")
+    renderable.append("│", style=border_style)
+    return renderable
+
+
+def _notification_display_message(message: str) -> str:
+    if len(message) <= _NOTIFICATION_MESSAGE_WIDTH:
+        return message
+    return f"{message[: _NOTIFICATION_MESSAGE_WIDTH - 3]}..."
+
+
+def _notification_color(severity: NotificationSeverity) -> str:
+    if severity == "success":
+        return "green"
+    if severity == "warning":
+        return "yellow"
+    if severity == "error":
+        return "red"
+    return "cyan"
+
+
+def _notification_timeout(severity: NotificationSeverity) -> float:
+    if severity == "success":
+        return TUI_NOTIFICATION_SUCCESS_TIMEOUT_SECONDS
+    if severity == "warning":
+        return TUI_NOTIFICATION_WARNING_TIMEOUT_SECONDS
+    if severity == "error":
+        return TUI_NOTIFICATION_ERROR_TIMEOUT_SECONDS
+    return TUI_NOTIFICATION_INFO_TIMEOUT_SECONDS
+
+
+def _notification_offset_x(width: int) -> int:
+    return max(0, width - (_NOTIFICATION_WIDTH + 2))
 
 
 def _top_bar_text(document: Document, state: EditorState) -> str:
