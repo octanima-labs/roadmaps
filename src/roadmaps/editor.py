@@ -104,6 +104,7 @@ def create_editor_app(document: Document) -> Any:
             ("ctrl+g", "group_rows", "Group rows"),
             ("ctrl+t", "toggle_group_collapsed", "Toggle group"),
             ("ctrl+shift+t", "toggle_all_group_collapsed", "Toggle all groups"),
+            ("delete", "delete_rows", "Delete rows"),
             ("o", "insert_unsorted", "New unsorted"),
             ("u", "insert_sorted", "New sorted"),
             ("ctrl+u", "insert_unsorted_subtask", "New unsorted subtask"),
@@ -306,6 +307,17 @@ def create_editor_app(document: Document) -> Any:
                 self._set_message("groups expanded" if expanded else "groups collapsed")
             else:
                 self._set_message("no visible groups changed")
+
+        def action_delete_rows(self) -> None:
+            if self.prompt_kind is not None or self.editing:
+                return
+            self._sync_selection_from_table_cursor()
+            count = self.state.selected_delete_count()
+            if count == 0:
+                self._set_message("no row selected")
+                return
+            message = "Delete row? (y/N)" if count == 1 else f"Delete {count} rows? (y/N)"
+            self._start_prompt("delete-confirm", message)
 
         def action_move_row_up(self) -> None:
             if self.prompt_kind is not None or self.editing:
@@ -574,6 +586,13 @@ def create_editor_app(document: Document) -> Any:
                         allow_completed=self.completion_allow_completed,
                     )
                     self._finish_prompt("completion updated" if changed else "completion unchanged")
+                elif self.prompt_kind == "delete-confirm":
+                    if parse_confirmation_prompt(edit_input.value, default=False):
+                        count = len(self.state.delete_selected_items())
+                        message = "row deleted" if count == 1 else f"{count} rows deleted"
+                        self._finish_prompt(message)
+                    else:
+                        self._finish_prompt("delete cancelled")
                 elif self.prompt_kind == "save-path":
                     self._submit_save_path(edit_input.value)
                 elif self.prompt_kind == "save-format":

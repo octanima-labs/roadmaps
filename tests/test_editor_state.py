@@ -961,6 +961,62 @@ def test_group_selected_rows_converts_single_focused_task() -> None:
     assert state.selected_path == (0,)
 
 
+def test_delete_selected_items_deletes_focused_row_and_repairs_selection() -> None:
+    first = Task("first", order=1)
+    second = Task("second", order=2)
+    third = Task("third", order=3)
+    state = EditorState(Roadmap([first, second, third]))
+    state.select_path((1,))
+
+    deleted = state.delete_selected_items()
+
+    assert deleted == [second]
+    assert state.roadmap.steps == [first, third]
+    assert [step.order for step in state.roadmap.steps] == [1, 2]
+    assert state.selected_path == (1,)
+    assert state.selected_paths == set()
+    assert state.dirty is True
+
+
+def test_delete_selected_items_collapses_nested_marks_to_outer_rows() -> None:
+    group = TaskGroup("group", tasks=[Task("child"), Task("other")])
+    after = Task("after")
+    state = EditorState(Roadmap([group, after]))
+    state.selected_paths = {(0,), (0, 0), (1,)}
+
+    assert state.selected_delete_count() == 2
+    deleted = state.delete_selected_items()
+
+    assert {item.description for item in deleted} == {"group", "after"}
+    assert state.roadmap.steps == []
+    assert state.selected_path is None
+    assert state.selected_paths == set()
+
+
+def test_delete_selected_items_converts_emptied_parent_to_task() -> None:
+    child = Task("child")
+    group = TaskGroup("group", order=1, tasks=[child])
+    state = EditorState(Roadmap([group, Task("after", order=2)]))
+    state.select_path((0, 0))
+
+    deleted = state.delete_selected_items()
+
+    assert deleted == [child]
+    assert isinstance(state.roadmap.steps[0], Task)
+    assert not isinstance(state.roadmap.steps[0], TaskGroup)
+    assert [step.description for step in state.roadmap.steps] == ["group", "after"]
+    assert [step.order for step in state.roadmap.steps] == [1, 2]
+    assert state.selected_path == (1,)
+
+
+def test_delete_selected_items_without_selection_is_noop() -> None:
+    state = EditorState(Roadmap())
+
+    assert state.selected_delete_count() == 0
+    assert state.delete_selected_items() == []
+    assert state.dirty is False
+
+
 @pytest.mark.parametrize("description", ["", None])
 def test_group_selected_rows_repairs_invalid_focused_task_description(
     description: object,

@@ -27,6 +27,8 @@ from roadmaps.constants import (
     VALID_STATUSES,
 )
 
+ItemPath = tuple[int, ...]
+
 
 @dataclass(init=False)
 class Task:
@@ -445,6 +447,12 @@ class Roadmap:
             raise ValueError(msg)
         return task
 
+    def delete_item(self, path: ItemPath) -> Task | TaskGroup:
+        _validate_item_path(path)
+        deleted = _delete_item_at_path(self.steps, path)
+        _renumber_sorted_siblings(self.steps)
+        return deleted
+
     def leaf_tasks(self) -> list[Task]:
         return list(_leaf_tasks(self.steps))
 
@@ -664,6 +672,49 @@ def _group_to_task_in_items(
             if converted is not None:
                 return converted
     return None
+
+
+def _delete_item_at_path(
+    items: list[Task | TaskGroup],
+    path: ItemPath,
+) -> Task | TaskGroup:
+    index = path[0]
+    if index >= len(items):
+        msg = "path index is out of range"
+        raise ValueError(msg)
+    if len(path) == 1:
+        return items.pop(index)
+
+    parent = items[index]
+    if not isinstance(parent, TaskGroup):
+        msg = "path descends through a leaf task"
+        raise ValueError(msg)  # noqa: TRY004 - public path API reports invalid paths as ValueError.
+
+    deleted = _delete_item_at_path(parent.tasks, path[1:])
+    if not parent.tasks:
+        items[index] = parent.to_task()
+    else:
+        _renumber_sorted_siblings(parent.tasks)
+    _renumber_sorted_siblings(items)
+    return deleted
+
+
+def _validate_item_path(path: ItemPath) -> None:
+    if not isinstance(path, tuple) or not path:
+        msg = "path must be a non-empty tuple of zero-based indexes"
+        raise ValueError(msg)
+    if any(isinstance(index, bool) or not isinstance(index, int) or index < 0 for index in path):
+        msg = "path must be a non-empty tuple of zero-based indexes"
+        raise ValueError(msg)
+
+
+def _renumber_sorted_siblings(siblings: list[Task | TaskGroup]) -> None:
+    order = 1
+    for item in siblings:
+        if item.order == UNSORTED:
+            continue
+        item.order = order
+        order += 1
 
 
 def _next_tasks(tasks: Iterable[Task], count: int) -> list[Task]:

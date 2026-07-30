@@ -525,6 +525,58 @@ def test_conversion_helpers_raise_when_target_is_not_found() -> None:
         roadmap.group_to_task(TaskGroup("missing"))
 
 
+def test_delete_item_removes_path_and_renumbers_sorted_siblings() -> None:
+    first = Task("first", order=1)
+    loose = Task("loose")
+    second = Task("second", order=2)
+    third = Task("third", order=3)
+    roadmap = Roadmap([first, loose, second, third])
+
+    deleted = roadmap.delete_item((2,))
+
+    assert deleted is second
+    assert roadmap.steps == [first, loose, third]
+    assert [step.order for step in roadmap.steps] == [1, UNSORTED, 2]
+
+
+def test_delete_item_removes_nested_path_and_converts_empty_parent() -> None:
+    child = Task("child", order=1)
+    group = TaskGroup("group", order=1, priority=5, milestone=3, tasks=[child])
+    after = Task("after", order=2)
+    roadmap = Roadmap([group, after])
+
+    deleted = roadmap.delete_item((0, 0))
+
+    assert deleted is child
+    assert isinstance(roadmap.steps[0], Task)
+    assert not isinstance(roadmap.steps[0], TaskGroup)
+    assert roadmap.steps[0] == Task("group", order=1, priority=5, milestone=3)
+    assert roadmap.steps == [roadmap.steps[0], after]
+    assert [step.order for step in roadmap.steps] == [1, 2]
+
+
+def test_delete_item_renumbers_nested_siblings_without_converting_nonempty_parent() -> None:
+    first = Task("first", order=1)
+    second = Task("second", order=2)
+    loose = Task("loose")
+    group = TaskGroup("group", tasks=[first, second, loose])
+    roadmap = Roadmap([group])
+
+    deleted = roadmap.delete_item((0, 0))
+
+    assert deleted is first
+    assert group.tasks == [second, loose]
+    assert [task.order for task in group.tasks] == [1, UNSORTED]
+
+
+@pytest.mark.parametrize("path", [(), (2,), (-1,), (0, 0), [0], (True,)])
+def test_delete_item_rejects_invalid_paths(path: object) -> None:
+    roadmap = Roadmap([Task("task")])
+
+    with pytest.raises(ValueError, match="path|range|leaf"):
+        roadmap.delete_item(path)  # type: ignore[arg-type]
+
+
 def test_converted_items_round_trip_through_formats() -> None:
     target = Task("target", priority=900, milestone=1)
     child = Task("child")

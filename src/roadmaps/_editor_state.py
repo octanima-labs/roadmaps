@@ -329,6 +329,29 @@ class EditorState:
         self.dirty = True
         return group
 
+    def delete_selected_items(self) -> list[Task | TaskGroup]:
+        rows = self.selected_rows or ([self.selected_row] if self.selected_row is not None else [])
+        paths = _outermost_paths([row.path for row in rows if row is not None])
+        if not paths:
+            return []
+
+        previous_rows = self.rows
+        deleted: list[Task | TaskGroup] = []
+        for path in sorted(paths, reverse=True):
+            deleted.append(self.roadmap.delete_item(path))
+        self.clear_row_marks()
+        self.collapsed_item_ids.intersection_update(
+            id(row.item) for row in self.rows if isinstance(row.item, TaskGroup)
+        )
+        self.dirty = True
+        self.repair_selection(previous_rows)
+        return deleted
+
+    def selected_delete_count(self) -> int:
+        if self.selected_paths:
+            return len(_outermost_paths([row.path for row in self.selected_rows]))
+        return 1 if self.selected_row is not None else 0
+
     def convert_selected_task_to_group(self) -> TaskGroup | None:
         row = self.selected_row
         if row is None:
@@ -936,6 +959,20 @@ def _visible_sibling_indices(
         for index, item in enumerate(siblings)
         if not (hide_completed and item.status == COMPLETED)
     ]
+
+
+def _outermost_paths(paths: list[Path]) -> list[Path]:
+    unique_paths = sorted(set(paths))
+    outer_paths: list[Path] = []
+    for path in unique_paths:
+        if any(_is_ancestor_path(candidate, path) for candidate in outer_paths):
+            continue
+        outer_paths.append(path)
+    return outer_paths
+
+
+def _is_ancestor_path(candidate: Path, path: Path) -> bool:
+    return len(candidate) < len(path) and path[: len(candidate)] == candidate
 
 
 def _path_for_item(

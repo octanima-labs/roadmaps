@@ -901,6 +901,57 @@ def test_editor_toggle_all_group_collapsed_alternates_visible_groups() -> None:
     assert app.message_bar.value == "groups expanded"
 
 
+def test_editor_delete_prompt_defaults_to_cancel() -> None:
+    app = create_editor_app(Document(Roadmap([Task("first")]), "text"))
+    _wire_fake_widgets(app)
+    app._refresh_table()
+
+    app.action_delete_rows()
+
+    assert app.prompt_kind == "delete-confirm"
+    assert app.message_bar.value == "Delete row? (y/N)"
+
+    app.edit_input.value = ""
+    app.on_input_submitted(SimpleNamespace(input=app.edit_input))
+
+    assert [step.description for step in app.document.roadmap.steps] == ["first"]
+    assert app.state.dirty is False
+    assert app.message_bar.value == "delete cancelled"
+
+
+def test_editor_delete_prompt_removes_focused_row_after_confirmation() -> None:
+    app = create_editor_app(Document(Roadmap([Task("first"), Task("second")]), "text"))
+    _wire_fake_widgets(app)
+    app._refresh_table()
+
+    app.action_delete_rows()
+    app.edit_input.value = "y"
+    app.on_input_submitted(SimpleNamespace(input=app.edit_input))
+
+    assert [step.description for step in app.document.roadmap.steps] == ["second"]
+    assert app.state.dirty is True
+    assert app.state.selected_path == (0,)
+    assert app.message_bar.value == "row deleted"
+
+
+def test_editor_delete_prompt_removes_marked_outer_rows_after_confirmation() -> None:
+    group = TaskGroup("group", tasks=[Task("child")])
+    app = create_editor_app(Document(Roadmap([group, Task("after")]), "text"))
+    _wire_fake_widgets(app)
+    app._refresh_table()
+    app.state.selected_paths = {(0,), (0, 0), (1,)}
+
+    app.action_delete_rows()
+    assert app.message_bar.value == "Delete 2 rows? (y/N)"
+
+    app.edit_input.value = "yes"
+    app.on_input_submitted(SimpleNamespace(input=app.edit_input))
+
+    assert app.document.roadmap.steps == []
+    assert app.state.selected_paths == set()
+    assert app.message_bar.value == "2 rows deleted"
+
+
 def test_editor_highlight_event_updates_internal_selection() -> None:
     app = create_editor_app(Document(Roadmap([Task("first"), Task("second")]), "text"))
     _wire_fake_widgets(app)
