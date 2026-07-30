@@ -94,6 +94,33 @@ def test_rows_show_progress_bars_with_ascii_fallback(monkeypatch: pytest.MonkeyP
     assert state.rows[0].completion_text == "[####------] 40%"
 
 
+def test_rows_show_eighth_block_progress_bars() -> None:
+    state = EditorState(
+        Roadmap(
+            [
+                Task("tiny", status=ONGOING, completion=1.0),
+                Task("partial", status=ONGOING, completion=45.0),
+                Task("nearly complete", status=ONGOING, completion=99.0),
+            ]
+        )
+    )
+
+    assert [row.completion_text for row in state.rows] == [
+        "[▏░░░░░░░░░] 1%",
+        "[████▌░░░░░] 45%",
+        "[█████████▉] 99%",
+    ]
+
+
+def test_rows_scale_eighth_block_progress_bars_to_configured_width(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("roadmaps._editor_state.TUI_PROGRESS_BAR_WIDTH", 4)
+    state = EditorState(Roadmap([Task("task", status=ONGOING, completion=62.5)]))
+
+    assert state.rows[0].completion_text == "[██▌░] 62.5%"
+
+
 def test_rows_show_roman_milestones_with_decimal_fallback(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

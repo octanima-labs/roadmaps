@@ -795,11 +795,21 @@ def _order_part(item: Task | TaskGroup) -> str:
 def _completion_text(item: Task | TaskGroup) -> str:
     completion = max(0.0, min(item.completion, 100.0))
     width = max(TUI_PROGRESS_BAR_WIDTH, 1)
-    filled = width if completion >= 100.0 else int(completion * width / 100.0)
-    empty = width - filled
-    filled_char = "█" if ENABLE_TUI_UNICODE_PROGRESS else "#"
-    empty_char = "░" if ENABLE_TUI_UNICODE_PROGRESS else "-"
-    return f"[{filled_char * filled}{empty_char * empty}] {item.completion_percent}"
+    if not ENABLE_TUI_UNICODE_PROGRESS:
+        filled = width if completion >= 100.0 else int(completion * width / 100.0)
+        empty = width - filled
+        return f"[{'#' * filled}{'-' * empty}] {item.completion_percent}"
+
+    max_units = width * 8
+    units = round(completion * max_units / 100.0)
+    if 0.0 < completion < 100.0:
+        units = min(max(units, 1), max_units - 1)
+    else:
+        units = max(0, min(units, max_units))
+    filled, partial = divmod(units, 8)
+    partial_text = "" if partial == 0 else "▏▎▍▌▋▊▉"[partial - 1]
+    empty = width - filled - (1 if partial_text else 0)
+    return f"[{'█' * filled}{partial_text}{' ' * empty}] {item.completion_percent}"
 
 
 def _priority_text(item: Task | TaskGroup) -> str:
