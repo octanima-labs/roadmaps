@@ -47,6 +47,18 @@ def test_task_description_allows_inline_markdown_text() -> None:
     assert task.description == description
 
 
+def test_task_description_strips_outer_whitespace() -> None:
+    task = Task("  first line\n  second line  ")
+
+    assert task.description == "first line\n  second line"
+
+
+def test_task_group_description_strips_outer_whitespace() -> None:
+    group = TaskGroup("  group  ", tasks=[Task("child")])
+
+    assert group.description == "group"
+
+
 @pytest.mark.parametrize(
     "description",
     [

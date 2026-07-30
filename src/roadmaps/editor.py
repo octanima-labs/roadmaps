@@ -38,6 +38,9 @@ _PRIORITY_GRADIENT_LOW = "#22c55e"
 _PRIORITY_GRADIENT_MID = "#facc15"
 _PRIORITY_GRADIENT_HIGH = "#ef4444"
 _TABLE_CELL_COUNT = 5
+_DESCRIPTION_COLUMN_INDEX = 4
+_MIN_DESCRIPTION_WIDTH = 20
+_FIXED_TABLE_WIDTH = 46
 
 NotificationSeverity = str
 
@@ -68,6 +71,7 @@ def create_editor_app(document: Document) -> Any:
     vertical_scroll: Any = textual_containers.VerticalScroll
     data_table: Any = textual_widgets.DataTable
     input_widget: Any = textual_widgets.Input
+    text_area_widget: Any = textual_widgets.TextArea
     static: Any = textual_widgets.Static
     text: Any = rich_text.Text
     style_cls: Any = rich_style.Style
@@ -92,6 +96,17 @@ def create_editor_app(document: Document) -> Any:
                     return
             await super()._on_click(event)
 
+    class DescriptionTextArea(text_area_widget):  # type: ignore[misc, valid-type]
+        def _on_key(self, event: Any) -> None:
+            if event.key == "enter":
+                self.app._exit_edit_mode(commit=True)
+                event.prevent_default()
+                event.stop()
+            elif event.key == "alt+enter":
+                self.insert("\n")
+                event.prevent_default()
+                event.stop()
+
     class RoadmapEditorApp(app_base):  # type: ignore[misc, valid-type]
         CSS = """
         #top-bar {
@@ -106,6 +121,11 @@ def create_editor_app(document: Document) -> Any:
 
         #description-edit {
             display: none;
+        }
+
+        #description-area {
+            display: none;
+            height: 4;
         }
 
         #message-bar {
@@ -186,10 +206,12 @@ def create_editor_app(document: Document) -> Any:
             self.table: Any | None = None
             self.top_bar: Any | None = None
             self.edit_input: Any | None = None
+            self.description_area: Any | None = None
             self.message_bar: Any | None = None
             self.notification_slots: list[Any] = []
             self.visible_notifications: list[_Notification] = []
             self.next_notification_id = 1
+            self.expanded_description_item_ids: set[int] = set()
             self.cheatsheet: Any | None = None
             self.cheatsheet_panel: Any | None = None
             self.cheatsheet_overlay: Any | None = None
@@ -215,6 +237,12 @@ def create_editor_app(document: Document) -> Any:
             yield table
             self.edit_input = input_widget(id="description-edit")
             yield self.edit_input
+            self.description_area = DescriptionTextArea(
+                id="description-area",
+                show_line_numbers=False,
+                soft_wrap=True,
+            )
+            yield self.description_area
             self.message_bar = static("", id="message-bar")
             yield self.message_bar
             self.notification_slots = [
@@ -573,7 +601,13 @@ def create_editor_app(document: Document) -> Any:
             if row_index is None:
                 return
             self._sync_selection_from_cursor_row(row_index)
-            if self.state.toggle_selected_group_collapsed():
+            if self._event_table_column_index(event) == _DESCRIPTION_COLUMN_INDEX:
+                if self._toggle_selected_description_expanded():
+                    self._refresh_table()
+                    self._set_message("description toggled")
+                else:
+                    self._set_message("description already fully visible")
+            elif self.state.toggle_selected_group_collapsed():
                 self._refresh_table()
                 self._set_message("group toggled")
             else:
@@ -616,12 +650,12 @@ def create_editor_app(document: Document) -> Any:
                 self._set_message("completed rows are read-only")
                 return
 
-            edit_input = self._edit_input()
-            edit_input.value = row.description
-            edit_input.styles.display = "block"
-            edit_input.focus()
+            description_area = self._description_area()
+            description_area.load_text(row.description)
+            description_area.styles.display = "block"
+            description_area.focus()
             self.editing = True
-            self._set_prompt_message("editing description")
+            self._set_prompt_message("editing description; alt+enter adds a newline")
 
         def _start_prompt(
             self,
@@ -955,10 +989,11 @@ def create_editor_app(document: Document) -> Any:
             if not self.editing:
                 return
 
-            edit_input = self._edit_input()
             if commit:
                 try:
-                    changed = self.state.update_selected_description(edit_input.value)
+                    changed = self.state.update_selected_description(
+                        self._description_area().text
+                    )
                 except ValueError as exc:
                     self._notify_error(str(exc))
                     return
@@ -970,14 +1005,22 @@ def create_editor_app(document: Document) -> Any:
             else:
                 self._notify_info("edit cancelled")
 
-            edit_input.styles.display = "none"
-            edit_input.value = ""
+            description_area = self._description_area()
+            description_area.styles.display = "none"
+            description_area.load_text("")
             self.editing = False
             self._table().focus()
 
         def _refresh_table(self) -> None:
             self.state.repair_selection()
-            _populate_table(self._table(), self.state, text, style_cls)
+            _populate_table(
+                self._table(),
+                self.state,
+                text,
+                style_cls,
+                table_width=self.size.width,
+                expanded_description_item_ids=self.expanded_description_item_ids,
+            )
             self._select_current_row()
             self._refresh_top_bar()
 
@@ -1030,6 +1073,26 @@ def create_editor_app(document: Document) -> Any:
             if not isinstance(row_index, int) or not 0 <= row_index < len(self.state.rows):
                 return None
             return row_index
+
+        def _event_table_column_index(self, event: Any) -> int | None:
+            style = getattr(event, "style", None)
+            meta = getattr(style, "meta", None) if style is not None else None
+            column_index = meta.get("column") if isinstance(meta, dict) else None
+            return column_index if isinstance(column_index, int) else None
+
+        def _toggle_selected_description_expanded(self) -> bool:
+            row = self.state.selected_row
+            if row is None:
+                return False
+            if not _description_has_hidden_content(row, self.state.rows, self.size.width):
+                self.expanded_description_item_ids.discard(id(row.item))
+                return False
+            item_id = id(row.item)
+            if item_id in self.expanded_description_item_ids:
+                self.expanded_description_item_ids.remove(item_id)
+            else:
+                self.expanded_description_item_ids.add(item_id)
+            return True
 
         def _refresh_top_bar(self) -> None:
             top_bar = self.top_bar or self.query_one("#top-bar", static)
@@ -1165,6 +1228,11 @@ def create_editor_app(document: Document) -> Any:
             if self.edit_input is None:
                 self.edit_input = self.query_one("#description-edit", input_widget)
             return self.edit_input
+
+        def _description_area(self) -> Any:
+            if self.description_area is None:
+                self.description_area = self.query_one("#description-area", text_area_widget)
+            return self.description_area
 
         def _cheatsheet(self) -> Any:
             if self.cheatsheet is None:
@@ -1358,19 +1426,34 @@ def _top_bar_renderable(document: Document, state: EditorState, text: Any) -> An
     return bar
 
 
-def _populate_table(table: Any, state: EditorState, text: Any, style_cls: Any) -> None:
+def _populate_table(
+    table: Any,
+    state: EditorState,
+    text: Any,
+    style_cls: Any,
+    *,
+    table_width: int = 80,
+    expanded_description_item_ids: set[int] | None = None,
+) -> None:
     table.clear(columns=True)
     table.add_columns("Completion", "Priority", "Milestone", "Order", "Description")
     rows = state.rows
-    descriptions = _tree_descriptions(rows)
+    expanded_ids = expanded_description_item_ids or set()
+    description_width = _description_width(table_width)
     for row in rows:
+        description_text, row_height = _display_description(
+            row,
+            rows,
+            description_width,
+            expanded_ids,
+        )
         table.add_row(
             _styled_text(row.completion_text, row, text, style_cls, cell="completion", cell_index=0),
             _styled_text(row.priority_text, row, text, style_cls, cell="priority", cell_index=1),
             _styled_text(row.milestone_text, row, text, style_cls, cell="milestone", cell_index=2),
             _styled_text(row.order_text, row, text, style_cls, cell="order", cell_index=3),
             _styled_text(
-                descriptions[row.path],
+                description_text,
                 row,
                 text,
                 style_cls,
@@ -1378,8 +1461,78 @@ def _populate_table(table: Any, state: EditorState, text: Any, style_cls: Any) -
                 cell_index=4,
             ),
             key=str(row.path),
-            height=max(TUI_TABLE_ROW_HEIGHT, 1),
+            height=row_height,
         )
+
+
+def _description_width(table_width: int) -> int:
+    return max(int(table_width) - _FIXED_TABLE_WIDTH, _MIN_DESCRIPTION_WIDTH)
+
+
+def _display_description(
+    row: EditorRow,
+    rows: list[EditorRow],
+    width: int,
+    expanded_description_item_ids: set[int],
+) -> tuple[str, int]:
+    lines, continuation_prefix = _wrapped_tree_description(row, rows, width)
+    minimum_height = max(TUI_TABLE_ROW_HEIGHT, 1)
+    if id(row.item) in expanded_description_item_ids:
+        visible_lines = lines
+    else:
+        visible_lines = lines[:minimum_height]
+    visible_lines = [*visible_lines, *([continuation_prefix] * (minimum_height - len(visible_lines)))]
+    return "\n".join(visible_lines), max(minimum_height, len(visible_lines))
+
+
+def _description_has_hidden_content(
+    row: EditorRow,
+    rows: list[EditorRow],
+    table_width: int,
+) -> bool:
+    lines, _continuation_prefix = _wrapped_tree_description(row, rows, _description_width(table_width))
+    return len(lines) > max(TUI_TABLE_ROW_HEIGHT, 1)
+
+
+def _wrapped_tree_description(
+    row: EditorRow,
+    rows: list[EditorRow],
+    width: int,
+) -> tuple[list[str], str]:
+    sibling_indexes = _visible_sibling_indexes(rows)
+    parent_paths = _visible_parent_paths(rows)
+    first_prefix, continuation_prefix, description = _tree_description_parts(row, sibling_indexes, parent_paths)
+    wrapped: list[str] = []
+    for line_index, line in enumerate(description.splitlines() or [""]):
+        prefix = first_prefix if line_index == 0 else continuation_prefix
+        wrapped.extend(_wrapped_description_line(line, prefix, continuation_prefix, width))
+    return wrapped, continuation_prefix
+
+
+def _wrapped_description_line(
+    line: str,
+    first_prefix: str,
+    continuation_prefix: str,
+    width: int,
+) -> list[str]:
+    first_width = max(width - len(first_prefix), 1)
+    chunks = textwrap.wrap(
+        line,
+        width=first_width,
+        break_long_words=True,
+        break_on_hyphens=False,
+    ) or [""]
+    wrapped = [f"{first_prefix}{chunks[0]}"]
+    continuation_width = max(width - len(continuation_prefix), 1)
+    for chunk in chunks[1:]:
+        continuation_chunks = textwrap.wrap(
+            chunk,
+            width=continuation_width,
+            break_long_words=True,
+            break_on_hyphens=False,
+        ) or [""]
+        wrapped.extend(f"{continuation_prefix}{continuation_chunk}" for continuation_chunk in continuation_chunks)
+    return wrapped
 
 
 def _styled_text(
@@ -1504,17 +1657,31 @@ def _tree_description(row: EditorRow, rows: list[EditorRow] | None = None) -> st
 
 def _tree_descriptions(rows: list[EditorRow]) -> dict[tuple[int, ...], str]:
     sibling_indexes = _visible_sibling_indexes(rows)
-    return {row.path: _tree_description_for_row(row, sibling_indexes) for row in rows}
+    parent_paths = _visible_parent_paths(rows)
+    return {row.path: _tree_description_for_row(row, sibling_indexes, parent_paths) for row in rows}
 
 
 def _tree_description_for_row(
     row: EditorRow,
     sibling_indexes: dict[tuple[int, ...], list[int]],
+    parent_paths: set[tuple[int, ...]],
 ) -> str:
+    first_prefix, _continuation_prefix, description = _tree_description_parts(row, sibling_indexes, parent_paths)
+    return f"{first_prefix}{description}"
+
+
+def _tree_description_parts(
+    row: EditorRow,
+    sibling_indexes: dict[tuple[int, ...], list[int]],
+    parent_paths: set[tuple[int, ...]],
+) -> tuple[str, str, str]:
     marker = "* " if row.selected else ""
     collapsed = "▸ " if row.collapsed else ""
+    marker_padding = " " * len(marker + collapsed)
+    has_visible_child = row.path in parent_paths
     if row.depth == 0:
-        return f"{marker}{collapsed}{row.description}"
+        continuation_prefix = "│  " if has_visible_child else ""
+        return marker + collapsed, continuation_prefix + marker_padding, row.description
 
     prefix = ""
     for depth in range(row.depth):
@@ -1526,8 +1693,14 @@ def _tree_description_for_row(
             prefix += "   "
 
     parent_path = row.path[:-1]
-    branch = "├─ " if _has_later_sibling(sibling_indexes, parent_path, row.path[-1]) else "└─ "
-    return f"{prefix}{branch}{marker}{collapsed}{row.description}"
+    has_later_sibling = _has_later_sibling(sibling_indexes, parent_path, row.path[-1])
+    branch = "├─ " if has_later_sibling else "└─ "
+    continuation_branch = "│  " if has_later_sibling or has_visible_child else "   "
+    return (
+        f"{prefix}{branch}{marker}{collapsed}",
+        f"{prefix}{continuation_branch}{marker_padding}",
+        row.description,
+    )
 
 
 def _visible_sibling_indexes(rows: list[EditorRow]) -> dict[tuple[int, ...], list[int]]:
@@ -1535,6 +1708,10 @@ def _visible_sibling_indexes(rows: list[EditorRow]) -> dict[tuple[int, ...], lis
     for row in rows:
         indexes.setdefault(row.path[:-1], []).append(row.path[-1])
     return indexes
+
+
+def _visible_parent_paths(rows: list[EditorRow]) -> set[tuple[int, ...]]:
+    return {row.path[:-1] for row in rows if row.path}
 
 
 def _has_later_sibling(

@@ -225,6 +225,7 @@ class EditorState:
         if not isinstance(description, str) or not description.strip():
             msg = "description must be a non-empty string"
             raise ValueError(msg)
+        description = description.strip()
 
         _validate_description(description, "description", ValueError)
         if row.item.description == description:

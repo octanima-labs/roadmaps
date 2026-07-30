@@ -89,10 +89,27 @@ class FakeInput:
         self.focused = True
 
 
+class FakeTextArea:
+    def __init__(self) -> None:
+        self.text = ""
+        self.styles = SimpleNamespace(display="none")
+        self.focused = False
+
+    def load_text(self, value: str) -> None:
+        self.text = value
+
+    def insert(self, value: str) -> None:
+        self.text += value
+
+    def focus(self) -> None:
+        self.focused = True
+
+
 def _wire_fake_widgets(app: Any) -> None:
     app.table = FakeTable()
     app.top_bar = FakeStatic()
     app.edit_input = FakeInput()
+    app.description_area = FakeTextArea()
     app.message_bar = FakeStatic()
     app.notification_slots = [FakeStatic() for _ in range(3)]
     app.cheatsheet = FakeStatic()
@@ -215,8 +232,197 @@ def test_editor_table_uses_visual_polish_columns_and_selected_style() -> None:
     assert app.table.columns == ["Completion", "Priority", "Milestone", "Order", "Description"]
     assert app.table.row_heights == [2]
     assert app.table.rows[0][3].plain == "1"
-    assert app.table.rows[0][4].plain == "* first"
+    assert app.table.rows[0][4].plain == "* first\n  "
     assert "reverse" in str(app.table.rows[0][4].style)
+
+
+def test_editor_multiline_descriptions_default_to_two_visible_rows() -> None:
+    app = create_editor_app(Document(Roadmap([Task("one\ntwo\nthree")]), "text"))
+    _wire_fake_widgets(app)
+
+    app._refresh_table()
+
+    assert app.table.rows[0][4].plain == "one\ntwo"
+    assert app.table.row_heights == [2]
+
+
+def test_editor_expands_hidden_description_with_description_right_click() -> None:
+    app = create_editor_app(Document(Roadmap([Task("one\ntwo\nthree")]), "text"))
+    _wire_fake_widgets(app)
+    app._refresh_table()
+
+    stopped: list[bool] = []
+    app.on_mouse_down(
+        SimpleNamespace(
+            button=3,
+            style=SimpleNamespace(meta={"row": 0, "column": 4}),
+            stop=lambda: stopped.append(True),
+        )
+    )
+
+    assert app.table.rows[0][4].plain == "one\ntwo\nthree"
+    assert app.table.row_heights == [3]
+    assert "description toggled" in _toast_text(app)
+    assert stopped == [True]
+
+    app.on_mouse_down(
+        SimpleNamespace(
+            button=3,
+            style=SimpleNamespace(meta={"row": 0, "column": 4}),
+            stop=lambda: stopped.append(True),
+        )
+    )
+
+    assert app.table.rows[0][4].plain == "one\ntwo"
+    assert app.table.row_heights == [2]
+
+
+def test_editor_wraps_long_descriptions_instead_of_rendering_horizontally() -> None:
+    app = create_editor_app(Document(Roadmap([Task("x" * 80)]), "text"))
+    _wire_fake_widgets(app)
+
+    app._refresh_table()
+
+    lines = app.table.rows[0][4].plain.splitlines()
+    assert len(lines) == 2
+    assert all(len(line) <= 34 for line in lines)
+    assert app.table.row_heights == [2]
+
+
+def test_editor_wrapped_child_description_continues_tree_guides() -> None:
+    app = create_editor_app(
+        Document(
+            Roadmap(
+                [
+                    TaskGroup(
+                        "group",
+                        tasks=[Task("alpha " * 20), Task("sibling")],
+                    ),
+                    Task("later"),
+                ]
+            ),
+            "text",
+        )
+    )
+    _wire_fake_widgets(app)
+
+    app._refresh_table()
+
+    lines = app.table.rows[1][4].plain.splitlines()
+    assert lines[0].startswith("│  ├─ alpha")
+    assert lines[1].startswith("│  │  alpha")
+
+
+def test_editor_wrapped_last_child_description_uses_spaced_continuation() -> None:
+    app = create_editor_app(
+        Document(
+            Roadmap(
+                [
+                    TaskGroup(
+                        "group",
+                        tasks=[Task("sibling"), Task("alpha " * 20)],
+                    ),
+                    Task("later"),
+                ]
+            ),
+            "text",
+        )
+    )
+    _wire_fake_widgets(app)
+
+    app._refresh_table()
+
+    lines = app.table.rows[2][4].plain.splitlines()
+    assert lines[0].startswith("│  └─ alpha")
+    assert lines[1].startswith("│     alpha")
+
+
+def test_editor_one_line_child_description_continues_tree_guides() -> None:
+    app = create_editor_app(
+        Document(
+            Roadmap(
+                [
+                    TaskGroup("group", tasks=[Task("child"), Task("sibling")]),
+                    Task("later"),
+                ]
+            ),
+            "text",
+        )
+    )
+    _wire_fake_widgets(app)
+
+    app._refresh_table()
+
+    assert app.table.rows[1][4].plain == "│  ├─ child\n│  │  "
+    assert app.table.row_heights[1] == 2
+
+
+def test_editor_one_line_last_child_description_uses_spaced_continuation() -> None:
+    app = create_editor_app(
+        Document(
+            Roadmap(
+                [
+                    TaskGroup("group", tasks=[Task("sibling"), Task("child")]),
+                    Task("later"),
+                ]
+            ),
+            "text",
+        )
+    )
+    _wire_fake_widgets(app)
+
+    app._refresh_table()
+
+    assert app.table.rows[2][4].plain == "│  └─ child\n│     "
+    assert app.table.row_heights[2] == 2
+
+
+def test_editor_one_line_parent_description_continues_to_visible_child() -> None:
+    app = create_editor_app(
+        Document(Roadmap([TaskGroup("parent", tasks=[Task("child")])]), "text")
+    )
+    _wire_fake_widgets(app)
+
+    app._refresh_table()
+
+    assert app.table.rows[0][4].plain == "parent\n│  "
+    assert app.table.row_heights[0] == 2
+
+
+def test_editor_one_line_nested_parent_description_continues_to_visible_child() -> None:
+    app = create_editor_app(
+        Document(
+            Roadmap(
+                [
+                    TaskGroup(
+                        "outer",
+                        tasks=[TaskGroup("parent", tasks=[Task("child")])],
+                    ),
+                    Task("later"),
+                ]
+            ),
+            "text",
+        )
+    )
+    _wire_fake_widgets(app)
+
+    app._refresh_table()
+
+    assert app.table.rows[1][4].plain == "│  └─ parent\n│  │  "
+    assert app.table.row_heights[1] == 2
+
+
+def test_editor_collapsed_parent_description_does_not_continue_to_hidden_child() -> None:
+    app = create_editor_app(
+        Document(Roadmap([TaskGroup("parent", tasks=[Task("child")])]), "text")
+    )
+    _wire_fake_widgets(app)
+    app.state.toggle_selected_group_collapsed()
+
+    app._refresh_table()
+
+    assert app.table.rows[0][4].plain == "▸ parent\n  "
+    assert app.table.row_heights[0] == 2
 
 
 def test_editor_table_styles_priority_and_completed_rows() -> None:
@@ -333,13 +539,13 @@ def test_editor_cheatsheet_opens_read_only_over_description_edit() -> None:
     _wire_fake_widgets(app)
     app._refresh_table()
     app.action_edit_description()
-    app.edit_input.value = "draft"
+    app.description_area.text = "draft"
 
     app.action_toggle_cheatsheet()
 
     assert app.cheatsheet_visible is True
     assert app.editing is True
-    assert app.edit_input.value == "draft"
+    assert app.description_area.text == "draft"
 
 
 def test_editor_notifications_render_severity_colors_and_clear_idle_bar() -> None:
@@ -476,8 +682,8 @@ def test_editor_insert_enters_description_edit_mode() -> None:
     ]
     assert app.state.selected_path == (1,)
     assert app.editing is True
-    assert app.edit_input.value == "New task"
-    assert app.edit_input.styles.display == "block"
+    assert app.description_area.text == "New task"
+    assert app.description_area.styles.display == "block"
 
 
 def test_editor_insert_uses_visual_table_cursor_when_state_is_stale() -> None:
@@ -510,8 +716,8 @@ def test_editor_insert_subtask_enters_description_edit_mode() -> None:
     assert [task.order for task in group.tasks] == [1]
     assert app.state.selected_path == (0, 0)
     assert app.editing is True
-    assert app.edit_input.value == "New task"
-    assert app.edit_input.styles.display == "block"
+    assert app.description_area.text == "New task"
+    assert app.description_area.styles.display == "block"
 
 
 def test_editor_insert_subtask_uses_visual_table_cursor_when_state_is_stale() -> None:
@@ -537,20 +743,34 @@ def test_editor_description_edit_commit_and_cancel() -> None:
     app._refresh_table()
 
     app.action_edit_description()
-    app.edit_input.value = "updated"
+    app.description_area.text = "updated"
     app._exit_edit_mode(commit=True)
 
     assert app.document.roadmap.steps[0].description == "updated"
     assert app.state.dirty is True
     assert app.editing is False
-    assert app.edit_input.styles.display == "none"
+    assert app.description_area.styles.display == "none"
 
     app.action_edit_description()
-    app.edit_input.value = "cancelled"
+    app.description_area.text = "cancelled"
     app._exit_edit_mode(commit=False)
 
     assert app.document.roadmap.steps[0].description == "updated"
     assert "edit cancelled" in _toast_text(app)
+
+
+def test_editor_description_edit_commits_multiline_text() -> None:
+    app = create_editor_app(Document(Roadmap([Task("first")]), "text"))
+    _wire_fake_widgets(app)
+    app._refresh_table()
+
+    app.action_edit_description()
+    app.description_area.text = "  first line\nsecond line  "
+    app._exit_edit_mode(commit=True)
+
+    assert app.document.roadmap.steps[0].description == "first line\nsecond line"
+    assert app.state.dirty is True
+    assert app.editing is False
 
 
 def test_editor_description_edit_rejects_blank_input() -> None:
@@ -559,13 +779,13 @@ def test_editor_description_edit_rejects_blank_input() -> None:
     app._refresh_table()
 
     app.action_edit_description()
-    app.edit_input.value = "   "
+    app.description_area.text = "   "
     app._exit_edit_mode(commit=True)
 
     assert app.document.roadmap.steps[0].description == "first"
     assert app.state.dirty is False
     assert app.editing is True
-    assert app.edit_input.styles.display == "block"
+    assert app.description_area.styles.display == "block"
     assert "description must be a non-empty string" in _toast_text(app)
 
 
@@ -955,7 +1175,7 @@ def test_editor_toggle_row_mark_updates_description_prefix() -> None:
     app.action_toggle_row_mark()
 
     assert app.state.selected_paths == {(0,)}
-    assert app.table.rows[0][4].plain == "* first"
+    assert app.table.rows[0][4].plain == "* first\n  "
     assert "row selection toggled" in _toast_text(app)
 
 
@@ -1024,7 +1244,7 @@ def test_editor_group_selected_rows_enters_group_description_edit() -> None:
     assert [task.description for task in group.tasks] == ["first", "second"]
     assert app.state.selected_path == (0,)
     assert app.editing is True
-    assert app.edit_input.value == "New group"
+    assert app.description_area.text == "New group"
 
 
 def test_editor_group_selected_rows_rejects_different_parents() -> None:
@@ -1064,19 +1284,39 @@ def test_editor_toggle_group_collapsed_action_and_right_click() -> None:
 
     app.action_toggle_group_collapsed()
     assert [row.description for row in app.state.rows] == ["group"]
-    assert app.table.rows[0][4].plain == "▸ group"
+    assert app.table.rows[0][4].plain == "▸ group\n  "
     assert "group toggled" in _toast_text(app)
 
     stopped: list[bool] = []
     app.on_mouse_down(
         SimpleNamespace(
             button=3,
-            style=SimpleNamespace(meta={"row": 0, "column": 4}),
+            style=SimpleNamespace(meta={"row": 0, "column": 0}),
             stop=lambda: stopped.append(True),
         )
     )
     assert [row.description for row in app.state.rows] == ["group", "child"]
     assert stopped == [True]
+
+
+def test_editor_description_right_click_on_group_toggles_text_not_children() -> None:
+    app = create_editor_app(
+        Document(Roadmap([TaskGroup("one\ntwo\nthree", tasks=[Task("child")])]), "text")
+    )
+    _wire_fake_widgets(app)
+    app._refresh_table()
+
+    app.on_mouse_down(
+        SimpleNamespace(
+            button=3,
+            style=SimpleNamespace(meta={"row": 0, "column": 4}),
+            stop=lambda: None,
+        )
+    )
+
+    assert [row.description for row in app.state.rows] == ["one\ntwo\nthree", "child"]
+    assert app.table.rows[0][4].plain == "one\n│  two\n│  three"
+    assert app.table.row_heights[0] == 3
 
 
 def test_editor_toggle_all_group_collapsed_alternates_visible_groups() -> None:
@@ -1353,7 +1593,7 @@ def test_editor_save_after_edit_updates_document(tmp_path: Path) -> None:
     _wire_fake_widgets(app)
     app._refresh_table()
     app.action_edit_description()
-    app.edit_input.value = "new"
+    app.description_area.text = "new"
 
     app.action_save()
 
@@ -1369,7 +1609,7 @@ def test_textual_pilot_table_enter_starts_description_editing() -> None:
         async with app.run_test() as pilot:
             await pilot.press("enter")
             assert app.editing is True
-            assert app.edit_input.value == "first"
+            assert app.description_area.text == "first"
 
             await pilot.press("escape")
             assert app.editing is False
@@ -1404,7 +1644,29 @@ def test_textual_pilot_double_click_row_starts_description_editing() -> None:
             await pilot.double_click("#roadmap-grid", offset=(20, 4))
             assert app.state.selected_path == (1,)
             assert app.editing is True
-            assert app.edit_input.value == "second"
+            assert app.description_area.text == "second"
+
+    asyncio.run(run_pilot())
+
+
+def test_textual_pilot_alt_enter_inserts_description_newline() -> None:
+    pytest.importorskip("textual")
+    app = create_editor_app(Document(Roadmap([Task("first")]), "text"))
+
+    async def run_pilot() -> None:
+        async with app.run_test() as pilot:
+            await pilot.press("enter")
+            await pilot.press("end")
+            await pilot.press("alt+enter")
+
+            assert app.editing is True
+            assert app.description_area.text == "first\n"
+
+            app.description_area.insert("second")
+            await pilot.press("enter")
+
+            assert app.editing is False
+            assert app.document.roadmap.steps[0].description == "first\nsecond"
 
     asyncio.run(run_pilot())
 
@@ -1533,7 +1795,7 @@ def test_textual_pilot_drives_editor_keybindings(tmp_path: Path) -> None:
             assert app.editing is True
             assert app.state.selected_path == (1,)
 
-            app.edit_input.value = "inserted"
+            app.description_area.load_text("inserted")
             await pilot.press("enter")
             assert app.editing is False
             assert document.roadmap.steps[1].description == "inserted"

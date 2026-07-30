@@ -69,6 +69,7 @@ class Task:
         if not isinstance(self.description, str) or not self.description.strip():
             msg = "description must be a non-empty string"
             raise ValueError(msg)
+        self.description = self.description.strip()
         _validate_description(self.description, "description", ValueError)
         if self.order < UNSORTED:
             msg = "order must be UNSORTED or a non-negative integer"

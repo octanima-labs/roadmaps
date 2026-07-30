@@ -45,7 +45,7 @@ def test_rows_expose_display_fields_and_initial_selection() -> None:
     ]
     assert state.rows[0].order_text == "1"
     assert state.rows[1].order_text == "1.-"
-    assert state.rows[0].completion_text == "[░░░░░░░░░░] 0%"
+    assert state.rows[0].completion_text == "[          ] 0%"
     assert state.rows[0].milestone_text == "II"
     assert state.rows[0].group is True
     assert state.rows[1].priority_text == "!"
@@ -106,8 +106,8 @@ def test_rows_show_eighth_block_progress_bars() -> None:
     )
 
     assert [row.completion_text for row in state.rows] == [
-        "[▏░░░░░░░░░] 1%",
-        "[████▌░░░░░] 45%",
+        "[▏         ] 1%",
+        "[████▌     ] 45%",
         "[█████████▉] 99%",
     ]
 
@@ -118,7 +118,7 @@ def test_rows_scale_eighth_block_progress_bars_to_configured_width(
     monkeypatch.setattr("roadmaps._editor_state.TUI_PROGRESS_BAR_WIDTH", 4)
     state = EditorState(Roadmap([Task("task", status=ONGOING, completion=62.5)]))
 
-    assert state.rows[0].completion_text == "[██▌░] 62.5%"
+    assert state.rows[0].completion_text == "[██▌ ] 62.5%"
 
 
 def test_rows_show_roman_milestones_with_decimal_fallback(
@@ -391,8 +391,10 @@ def test_update_selected_description_marks_dirty_only_on_change() -> None:
 
     assert state.update_selected_description("old") is False
     assert state.dirty is False
+    assert state.update_selected_description("  old  ") is False
+    assert state.dirty is False
 
-    assert state.update_selected_description("new") is True
+    assert state.update_selected_description("  new  ") is True
     assert state.roadmap.steps[0].description == "new"
     assert state.dirty is True
 
