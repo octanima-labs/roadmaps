@@ -168,8 +168,8 @@ def create_editor_app(document: Document) -> Any:
             ("ctrl+t", "toggle_group_collapsed", "Toggle group"),
             ("ctrl+shift+t", "toggle_all_group_collapsed", "Toggle all groups"),
             ("delete", "delete_rows", "Delete rows"),
-            ("o", "insert_unsorted", "New unsorted"),
-            ("u", "insert_sorted", "New sorted"),
+            ("o", "insert_sorted", "New sorted"),
+            ("u", "insert_unsorted", "New unsorted"),
             ("ctrl+u", "insert_unsorted_subtask", "New unsorted subtask"),
             ("ctrl+o", "insert_sorted_subtask", "New sorted subtask"),
             ("ctrl+space", "cycle_status", "Cycle status"),
@@ -1197,8 +1197,8 @@ _CHEATSHEET_GROUPS: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
     (
         "Roadmap",
         (
-            ("O", "insert unsorted sibling"),
-            ("U", "insert sorted sibling"),
+            ("O", "insert sorted sibling"),
+            ("U", "insert unsorted sibling"),
             ("Ctrl+U", "insert unsorted subtask"),
             ("Ctrl+O", "insert sorted subtask"),
             ("Ctrl+G", "group marked rows or convert task"),

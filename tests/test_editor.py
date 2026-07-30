@@ -1433,6 +1433,34 @@ def test_textual_pilot_drives_alt_subtask_keybinding() -> None:
     asyncio.run(run_pilot())
 
 
+def test_textual_pilot_drives_mnemonic_sibling_insert_keybindings() -> None:
+    pytest.importorskip("textual")
+    document = Document(Roadmap([Task("first")]), "text")
+    app = create_editor_app(document)
+
+    async def run_pilot() -> None:
+        async with app.run_test() as pilot:
+            await pilot.press("o")
+            assert [(task.description, task.order) for task in document.roadmap.steps] == [
+                ("first", UNSORTED),
+                ("New task", 1),
+            ]
+            assert app.state.selected_path == (1,)
+            assert app.editing is True
+
+            await pilot.press("escape")
+            await pilot.press("u")
+            assert [(task.description, task.order) for task in document.roadmap.steps] == [
+                ("first", UNSORTED),
+                ("New task", 1),
+                ("New task", UNSORTED),
+            ]
+            assert app.state.selected_path == (2,)
+            assert app.editing is True
+
+    asyncio.run(run_pilot())
+
+
 def test_textual_pilot_drives_editor_keybindings(tmp_path: Path) -> None:
     pytest.importorskip("textual")
     path = tmp_path / "roadmap.roadmap"
@@ -1463,6 +1491,7 @@ def test_textual_pilot_drives_editor_keybindings(tmp_path: Path) -> None:
             await pilot.press("enter")
             assert app.editing is False
             assert document.roadmap.steps[1].description == "inserted"
+            assert document.roadmap.steps[1].order == 1
 
             await pilot.press("m")
             app.edit_input.value = "2"
@@ -1488,6 +1517,6 @@ def test_textual_pilot_drives_editor_keybindings(tmp_path: Path) -> None:
     asyncio.run(run_pilot())
     assert path.read_text().splitlines() == [
         "- [~] first",
-        "  - [~1.0%] (2) inserted",
+        "  1. [~1.0%] (2) inserted",
         "- [x] done",
     ]
