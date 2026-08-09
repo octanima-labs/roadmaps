@@ -200,8 +200,8 @@ roadmap next roadmap.md --count 3
 Render between formats:
 
 ```bash
-roadmap render roadmap.roadmap --to markdown
-roadmap render roadmap.json --to yaml
+roadmap export roadmap.roadmap --to markdown
+roadmap export roadmap.json --to yaml
 ```
 
 Show completion and task counts:
@@ -213,12 +213,12 @@ roadmap stats roadmap.json
 Filter roadmap items:
 
 ```bash
-roadmap show roadmap.roadmap --uncompleted
-roadmap show roadmap.md --completed --ongoing --optional
-roadmap show roadmap.yaml --category docs 'feat(parser)' --to markdown
+roadmap search roadmap.roadmap --uncompleted
+roadmap search roadmap.md --completed --ongoing --optional
+roadmap search roadmap.yaml --category docs 'feat(parser)' --to markdown
 ```
 
-`show` returns flat `Task` and `TaskGroup` matches in traversal order. Status filters combine by union, optional items are hidden unless `--optional` or `--all` is supplied, categories match conventional prefixes such as `docs:` or `feat(parser):`, and no matches returns `no matching tasks` with exit code `0`.
+`search` returns flat `Task` and `TaskGroup` matches in traversal order. Status filters combine by union, optional items are hidden unless `--optional` or `--all` is supplied, categories match conventional prefixes such as `docs:` or `feat(parser):`, and no matches returns `no matching tasks` with exit code `0`.
 
 Create a new empty roadmap file:
 
@@ -234,26 +234,26 @@ roadmap init --example roadmap.md
 Append a top-level task or add a nested child by 1-based dotted path:
 
 ```bash
-roadmap add-task roadmap.roadmap -d "docs: publish examples" --urgent --milestone 1
-roadmap add-task roadmap.json -d "core: partial work" --status ongoing --completion 50.0
-roadmap add-task roadmap.yaml -d "core: partial work" --status ongoing --completion 50.0
-roadmap add-task roadmap.roadmap --parent 1.2 -d "nested child"
+roadmap task add roadmap.roadmap -d "docs: publish examples" --urgent --milestone 1
+roadmap task add roadmap.json -d "core: partial work" --status ongoing --completion 50.0
+roadmap task add roadmap.yaml -d "core: partial work" --status ongoing --completion 50.0
+roadmap task add roadmap.roadmap --parent 1.2 -d "nested child"
 ```
 
-`add-task` supports `--order`, `--priority`, `--urgent`, `--optional`, `--milestone`, `--status not-started|ongoing|completed`, and `--completion`. With `--parent`, the parent path counts all siblings at each level, leaf parents are converted to groups, child order is assigned automatically, and omitted milestones inherit from the parent. Ongoing and completed tasks created through `add-task` receive JSON-persisted date fields automatically. Markdown saves preserve an existing `Roadmap` section heading level.
+`task add` supports `--order`, `--priority`, `--urgent`, `--optional`, `--milestone`, `--status not-started|ongoing|completed`, and `--completion`. With `--parent`, the parent path counts all siblings at each level, leaf parents are converted to groups, child order is assigned automatically, and omitted milestones inherit from the parent. Ongoing and completed tasks created through `task add` receive JSON-persisted date fields automatically. Markdown saves preserve an existing `Roadmap` section heading level.
 
 Edit, delete, move, group, and ungroup existing items by 1-based dotted path:
 
 ```bash
-roadmap set roadmap.roadmap 1.2 -d "docs: updated" --status ongoing --completion 50
-roadmap delete roadmap.roadmap 2
-roadmap move roadmap.roadmap 3 --before 1
-roadmap move roadmap.roadmap 2 --parent 1
-roadmap group roadmap.roadmap 1 2 -d "New group"
-roadmap ungroup roadmap.roadmap 1
+roadmap task set roadmap.roadmap 1.2 -d "docs: updated" --status ongoing --completion 50
+roadmap task delete roadmap.roadmap 2
+roadmap task move roadmap.roadmap 3 --before 1
+roadmap task move roadmap.roadmap 2 --parent 1
+roadmap task group roadmap.roadmap 1 2 -d "New group"
+roadmap task ungroup roadmap.roadmap 1
 ```
 
-`set` supports `--description`, `--priority`, `--urgent`, `--optional`, `--not-optional`, `--milestone`, `--status not-started|ongoing|completed`, and `--completion`. `delete` removes a `TaskGroup` subtree. `move` accepts exactly one of `--before PATH`, `--after PATH`, `--parent PATH`, or `--top-level`; leaf parents are converted to groups. `group` requires sibling paths and `ungroup` promotes children to the group parent. Write commands parse and re-render files canonically while preserving the source format.
+`task set` supports `--description`, `--priority`, `--urgent`, `--optional`, `--not-optional`, `--milestone`, `--status not-started|ongoing|completed`, and `--completion`. `task delete` removes a `TaskGroup` subtree. `task move` accepts exactly one of `--before PATH`, `--after PATH`, `--parent PATH`, or `--top-level`; leaf parents are converted to groups. `task group` requires sibling paths and `task ungroup` promotes children to the group parent. Write commands parse and re-render files canonically while preserving the source format.
 
 `roadmap editor [PATH] [--format text|json|yaml|markdown]` launches an MVP Textual editor when `roadmaps[editor]` is installed. It shows a styled path/format top bar with an orange `[UNSAVED]` tag only when dirty, plus Completion, Priority, Milestone, Order, and tree-prefixed Description columns with progress bars, priority coloring across metadata and description columns, cyan incomplete optional tasks, dimmed completed rows, roman milestones, selected-row reverse styling, and display-only order breadcrumbs. Keybindings include navigation, row selection/grouping/collapse, metadata prompts, completion/priority shortcuts, description editing, sibling and subtask insertion, movement, nesting, completed-row visibility, save, and dirty-exit confirmation. Without Textual it returns `error: Textual is required for the editor; install roadmaps[editor]`.
 

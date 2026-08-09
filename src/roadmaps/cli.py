@@ -81,29 +81,29 @@ def _build_parser() -> argparse.ArgumentParser:
     stats_parser.add_argument("file", type=Path)
     stats_parser.set_defaults(handler=_handle_stats)
 
-    render_parser = subparsers.add_parser(
-        "render",
+    export_parser = subparsers.add_parser(
+        "export",
         parents=[format_parent],
-        help="Render a roadmap file to another supported format.",
+        help="Export a roadmap file to another supported format.",
     )
-    render_parser.add_argument("file", type=Path)
-    render_parser.add_argument("--to", choices=FORMATS, required=True)
-    render_parser.set_defaults(handler=_handle_render)
+    export_parser.add_argument("file", type=Path)
+    export_parser.add_argument("--to", choices=FORMATS, required=True)
+    export_parser.set_defaults(handler=_handle_render)
 
-    show_parser = subparsers.add_parser(
-        "show",
+    search_parser = subparsers.add_parser(
+        "search",
         parents=[format_parent],
-        help="Show roadmap items matching filters.",
+        help="Search roadmap items matching filters.",
     )
-    show_parser.add_argument("file", type=Path)
-    show_parser.add_argument("--to", choices=FORMATS, help="Output format.")
-    show_parser.add_argument("-C", "--completed", action="store_true")
-    show_parser.add_argument("-U", "--uncompleted", action="store_true")
-    show_parser.add_argument("-O", "--ongoing", action="store_true")
-    show_parser.add_argument("-o", "--optional", action="store_true")
-    show_parser.add_argument("-A", "--all", action="store_true")
-    show_parser.add_argument("-c", "--category", nargs="+", dest="categories")
-    show_parser.set_defaults(handler=_handle_show)
+    search_parser.add_argument("file", type=Path)
+    search_parser.add_argument("--to", choices=FORMATS, help="Output format.")
+    search_parser.add_argument("-C", "--completed", action="store_true")
+    search_parser.add_argument("-U", "--uncompleted", action="store_true")
+    search_parser.add_argument("-O", "--ongoing", action="store_true")
+    search_parser.add_argument("-o", "--optional", action="store_true")
+    search_parser.add_argument("-A", "--all", action="store_true")
+    search_parser.add_argument("-c", "--category", nargs="+", dest="categories")
+    search_parser.set_defaults(handler=_handle_show)
 
     init_parser = subparsers.add_parser(
         "init",
@@ -118,10 +118,16 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     init_parser.set_defaults(handler=_handle_init)
 
-    add_task_parser = subparsers.add_parser(
-        "add-task",
+    task_parser = subparsers.add_parser(
+        "task",
+        help="Update roadmap tasks and task groups.",
+    )
+    task_subparsers = task_parser.add_subparsers(dest="task_command", required=True)
+
+    add_task_parser = task_subparsers.add_parser(
+        "add",
         parents=[format_parent],
-        help="Append a top-level task to a roadmap file.",
+        help="Append a top-level task or nested child to a roadmap file.",
     )
     add_task_parser.add_argument("file", type=Path)
     add_task_parser.add_argument("-d", "--description", required=True)
@@ -135,7 +141,7 @@ def _build_parser() -> argparse.ArgumentParser:
     add_task_parser.add_argument("--completion", type=float, default=0.0)
     add_task_parser.set_defaults(handler=_handle_add_task)
 
-    set_parser = subparsers.add_parser(
+    set_parser = task_subparsers.add_parser(
         "set",
         parents=[format_parent],
         help="Update an existing roadmap item by path.",
@@ -153,7 +159,7 @@ def _build_parser() -> argparse.ArgumentParser:
     set_parser.add_argument("--completion", type=float)
     set_parser.set_defaults(handler=_handle_set)
 
-    delete_parser = subparsers.add_parser(
+    delete_parser = task_subparsers.add_parser(
         "delete",
         parents=[format_parent],
         help="Delete a roadmap item subtree by path.",
@@ -162,7 +168,7 @@ def _build_parser() -> argparse.ArgumentParser:
     delete_parser.add_argument("path", help="1-based dotted item path.")
     delete_parser.set_defaults(handler=_handle_delete)
 
-    move_parser = subparsers.add_parser(
+    move_parser = task_subparsers.add_parser(
         "move",
         parents=[format_parent],
         help="Move a roadmap item by path.",
@@ -176,7 +182,7 @@ def _build_parser() -> argparse.ArgumentParser:
     destination_group.add_argument("--top-level", action="store_true", help="Move to the top level.")
     move_parser.set_defaults(handler=_handle_move)
 
-    group_parser = subparsers.add_parser(
+    group_parser = task_subparsers.add_parser(
         "group",
         parents=[format_parent],
         help="Group sibling roadmap items by path.",
@@ -186,7 +192,7 @@ def _build_parser() -> argparse.ArgumentParser:
     group_parser.add_argument("-d", "--description", default="New group")
     group_parser.set_defaults(handler=_handle_group)
 
-    ungroup_parser = subparsers.add_parser(
+    ungroup_parser = task_subparsers.add_parser(
         "ungroup",
         parents=[format_parent],
         help="Remove a TaskGroup wrapper and promote its children.",
