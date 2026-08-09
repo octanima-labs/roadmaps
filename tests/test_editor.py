@@ -94,6 +94,7 @@ class FakeTextArea:
         self.text = ""
         self.styles = SimpleNamespace(display="none")
         self.focused = False
+        self.select_all_called = False
 
     def load_text(self, value: str) -> None:
         self.text = value
@@ -103,6 +104,9 @@ class FakeTextArea:
 
     def focus(self) -> None:
         self.focused = True
+
+    def select_all(self) -> None:
+        self.select_all_called = True
 
 
 def _wire_fake_widgets(app: Any) -> None:
@@ -808,6 +812,7 @@ def test_editor_insert_enters_description_edit_mode() -> None:
     assert app.editing is True
     assert app.description_area.text == "New task"
     assert app.description_area.styles.display == "block"
+    assert app.description_area.select_all_called is True
 
 
 def test_editor_insert_uses_visual_table_cursor_when_state_is_stale() -> None:
@@ -867,6 +872,8 @@ def test_editor_description_edit_commit_and_cancel() -> None:
     app._refresh_table()
 
     app.action_edit_description()
+    assert app.description_area.text == "first"
+    assert app.description_area.select_all_called is True
     app.description_area.text = "updated"
     app._exit_edit_mode(commit=True)
 
@@ -1772,6 +1779,22 @@ def test_textual_pilot_table_enter_starts_description_editing() -> None:
 
             await pilot.press("escape")
             assert app.editing is False
+
+    asyncio.run(run_pilot())
+
+
+def test_textual_pilot_typing_replaces_selected_description() -> None:
+    pytest.importorskip("textual")
+    app = create_editor_app(Document(Roadmap([Task("first")]), "text"))
+
+    async def run_pilot() -> None:
+        async with app.run_test() as pilot:
+            await pilot.press("enter")
+            await pilot.press("n", "e", "w")
+            await pilot.press("enter")
+
+            assert app.editing is False
+            assert app.document.roadmap.steps[0].description == "new"
 
     asyncio.run(run_pilot())
 

@@ -713,6 +713,7 @@ def create_editor_app(document: Document) -> Any:
             description_area.load_text(row.description)
             description_area.styles.display = "block"
             description_area.focus()
+            description_area.select_all()
             self.editing = True
             self._set_prompt_message("editing description; alt+enter adds a newline")
 
