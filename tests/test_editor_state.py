@@ -579,6 +579,12 @@ def test_toggle_visible_groups_collapsed_alternates_editor_state() -> None:
     assert state.collapsed_item_ids == {id(outer), id(inner)}
     assert [row.description for row in state.rows] == ["outer"]
 
+    changed, expanded = state.toggle_visible_groups_collapsed()
+    assert changed is True
+    assert expanded is True
+    assert state.collapsed_item_ids == set()
+    assert [row.description for row in state.rows] == ["outer", "inner", "child"]
+
 
 def test_update_selected_completion_requires_leaf_and_confirmation_flags() -> None:
     state = EditorState(Roadmap([TaskGroup("group", tasks=[Task("child")])]))

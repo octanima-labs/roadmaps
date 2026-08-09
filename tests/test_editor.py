@@ -1398,7 +1398,7 @@ def test_editor_toggle_all_group_collapsed_alternates_visible_groups() -> None:
     assert "groups collapsed" in _toast_text(app)
 
     app.action_toggle_all_group_collapsed()
-    assert [row.description for row in app.state.rows] == ["outer", "inner"]
+    assert [row.description for row in app.state.rows] == ["outer", "inner", "child"]
     assert "groups expanded" in _toast_text(app)
 
 

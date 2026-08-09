@@ -384,7 +384,7 @@ class EditorState:
     def toggle_visible_groups_collapsed(self) -> tuple[bool, bool]:
         expand = self.expand_groups_next
         self.expand_groups_next = not self.expand_groups_next
-        group_ids = {id(row.item) for row in self.rows if isinstance(row.item, TaskGroup)}
+        group_ids = _group_item_ids(self.roadmap.steps)
         if not group_ids:
             return False, expand
 
@@ -757,6 +757,15 @@ def _flatten_rows(
                 )
             )
     return rows
+
+
+def _group_item_ids(items: list[Task | TaskGroup]) -> set[int]:
+    group_ids: set[int] = set()
+    for item in items:
+        if isinstance(item, TaskGroup):
+            group_ids.add(id(item))
+            group_ids.update(_group_item_ids(item.tasks))
+    return group_ids
 
 
 def _row_from_item(
