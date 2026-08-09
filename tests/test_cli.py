@@ -523,6 +523,165 @@ def test_add_task_parent_rejects_invalid_paths_and_order(tmp_path: Path, capsys)
     assert "--order" in capsys.readouterr().err
 
 
+def test_set_updates_existing_item_metadata_and_status(tmp_path: Path, capsys) -> None:
+    path = tmp_path / "roadmap.json"
+    path.write_text(Roadmap.from_text("- [ ] old").to_json())
+
+    assert (
+        main(
+            [
+                "set",
+                str(path),
+                "1",
+                "--description",
+                "new",
+                "--priority",
+                "5",
+                "--milestone",
+                "2",
+                "--status",
+                "ongoing",
+                "--completion",
+                "25",
+            ]
+        )
+        == 0
+    )
+
+    task = Roadmap.from_json(path.read_text()).steps[0]
+    assert isinstance(task, Task)
+    assert task.description == "new"
+    assert task.priority == 5
+    assert task.milestone == 2
+    assert task.status == ONGOING
+    assert task.completion == 25.0
+    assert task.start_date is not None
+    assert "updated json roadmap" in capsys.readouterr().out
+
+
+def test_set_marks_completed_and_preserves_markdown_heading(tmp_path: Path) -> None:
+    path = tmp_path / "roadmap.md"
+    path.write_text("# Notes\n\n## Roadmap\n\n- [ ] task\n")
+
+    assert main(["set", str(path), "1", "--status", "completed"]) == 0
+
+    assert path.read_text() == "## Roadmap\n\n- [x] task"
+
+
+def test_set_rejects_missing_fields_and_invalid_completion(tmp_path: Path, capsys) -> None:
+    path = tmp_path / "roadmap.roadmap"
+    path.write_text("- [ ] task")
+
+    assert main(["set", str(path), "1"]) == 1
+    assert "requires" in capsys.readouterr().err
+
+    assert main(["set", str(path), "1", "--status", "completed", "--completion", "50"]) == 1
+    assert "--completion" in capsys.readouterr().err
+
+    assert main(["set", str(path), "1", "--optional", "--priority", "1"]) == 1
+    assert "optional tasks" in capsys.readouterr().err
+
+
+def test_delete_removes_item_subtree(tmp_path: Path, capsys) -> None:
+    path = tmp_path / "roadmap.roadmap"
+    path.write_text("- [ ] parent\n  - [ ] child\n- [ ] sibling")
+
+    assert main(["delete", str(path), "1"]) == 0
+
+    assert path.read_text() == "- [ ] sibling"
+    assert "deleted item" in capsys.readouterr().out
+
+
+def test_delete_rejects_invalid_path(tmp_path: Path, capsys) -> None:
+    path = tmp_path / "roadmap.roadmap"
+    path.write_text("- [ ] task")
+
+    assert main(["delete", str(path), "2"]) == 1
+
+    assert "out of range" in capsys.readouterr().err
+
+
+def test_move_reorders_items_before_and_after(tmp_path: Path) -> None:
+    path = tmp_path / "roadmap.roadmap"
+    path.write_text("1. [ ] first\n2. [ ] second\n3. [ ] third")
+
+    assert main(["move", str(path), "3", "--before", "1"]) == 0
+    assert path.read_text() == "1. [ ] third\n2. [ ] first\n3. [ ] second"
+
+    assert main(["move", str(path), "1", "--after", "3"]) == 0
+    assert path.read_text() == "1. [ ] first\n2. [ ] second\n3. [ ] third"
+
+
+def test_move_reparents_item_and_converts_leaf_parent(tmp_path: Path) -> None:
+    path = tmp_path / "roadmap.roadmap"
+    path.write_text("- [ ] parent\n- [ ] child")
+
+    assert main(["move", str(path), "2", "--parent", "1"]) == 0
+
+    assert path.read_text() == "- [ ] parent\n  - [ ] child"
+
+
+def test_move_top_level_promotes_nested_item(tmp_path: Path) -> None:
+    path = tmp_path / "roadmap.roadmap"
+    path.write_text("- [ ] parent\n  - [ ] child\n- [ ] sibling")
+
+    assert main(["move", str(path), "1.1", "--top-level"]) == 0
+
+    assert path.read_text() == "- [ ] parent\n- [ ] sibling\n- [ ] child"
+
+
+def test_move_rejects_descendant_destination(tmp_path: Path, capsys) -> None:
+    path = tmp_path / "roadmap.roadmap"
+    path.write_text("- [ ] parent\n  - [ ] child")
+
+    assert main(["move", str(path), "1", "--parent", "1.1"]) == 1
+
+    assert "descendants" in capsys.readouterr().err
+
+
+def test_group_wraps_sibling_items(tmp_path: Path, capsys) -> None:
+    path = tmp_path / "roadmap.roadmap"
+    path.write_text("1. [ ] first\n2. [ ] second\n3. [ ] third")
+
+    assert main(["group", str(path), "1", "2", "--description", "group"]) == 0
+
+    assert path.read_text() == (
+        "1. [ ] group\n"
+        "  1. [ ] first\n"
+        "  2. [ ] second\n"
+        "2. [ ] third"
+    )
+    assert "grouped items" in capsys.readouterr().out
+
+
+def test_group_rejects_non_sibling_paths(tmp_path: Path, capsys) -> None:
+    path = tmp_path / "roadmap.roadmap"
+    path.write_text("- [ ] parent\n  - [ ] child\n- [ ] sibling")
+
+    assert main(["group", str(path), "1.1", "2"]) == 1
+
+    assert "same parent" in capsys.readouterr().err
+
+
+def test_ungroup_promotes_children(tmp_path: Path, capsys) -> None:
+    path = tmp_path / "roadmap.roadmap"
+    path.write_text("1. [ ] group\n  1. [ ] first\n  2. [ ] second\n2. [ ] third")
+
+    assert main(["ungroup", str(path), "1"]) == 0
+
+    assert path.read_text() == "1. [ ] first\n2. [ ] second\n3. [ ] third"
+    assert "ungrouped item" in capsys.readouterr().out
+
+
+def test_ungroup_rejects_leaf_path(tmp_path: Path, capsys) -> None:
+    path = tmp_path / "roadmap.roadmap"
+    path.write_text("- [ ] task")
+
+    assert main(["ungroup", str(path), "1"]) == 1
+
+    assert "task group" in capsys.readouterr().err
+
+
 def test_stats_outputs_completion_and_counts(tmp_path: Path, capsys) -> None:
     path = tmp_path / "roadmap.roadmap"
     path.write_text(
