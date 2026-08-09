@@ -251,30 +251,93 @@ def test_editor_expands_hidden_description_with_description_right_click() -> Non
     _wire_fake_widgets(app)
     app._refresh_table()
 
-    stopped: list[bool] = []
     app.on_mouse_down(
         SimpleNamespace(
             button=3,
             style=SimpleNamespace(meta={"row": 0, "column": 4}),
-            stop=lambda: stopped.append(True),
+            stop=lambda: None,
         )
     )
 
     assert app.table.rows[0][4].plain == "one\ntwo\nthree"
     assert app.table.row_heights == [3]
     assert "description toggled" in _toast_text(app)
-    assert stopped == [True]
 
+    app._last_right_click_time = 0.0
     app.on_mouse_down(
         SimpleNamespace(
             button=3,
             style=SimpleNamespace(meta={"row": 0, "column": 4}),
-            stop=lambda: stopped.append(True),
+            stop=lambda: None,
         )
     )
 
     assert app.table.rows[0][4].plain == "one\ntwo"
     assert app.table.row_heights == [2]
+
+
+def test_editor_ctrl_d_toggles_focused_hidden_description() -> None:
+    app = create_editor_app(Document(Roadmap([Task("one\ntwo\nthree"), Task("plain")]), "text"))
+    _wire_fake_widgets(app)
+    app._refresh_table()
+
+    app.action_toggle_description_expanded()
+
+    assert app.table.rows[0][4].plain == "one\n│  two\n│  three"
+    assert app.table.row_heights[0] == 3
+    assert "description toggled" in _toast_text(app)
+
+    app.action_toggle_description_expanded()
+
+    assert app.table.rows[0][4].plain == "one\n│  two"
+    assert app.table.row_heights[0] == 2
+
+
+def test_editor_ctrl_d_toggles_marked_hidden_descriptions() -> None:
+    app = create_editor_app(
+        Document(Roadmap([Task("one\ntwo\nthree"), Task("four\nfive\nsix"), Task("plain")]), "text")
+    )
+    _wire_fake_widgets(app)
+    app.state.selected_paths = {(0,), (1,)}
+    app._refresh_table()
+
+    app.action_toggle_description_expanded()
+
+    assert app.table.rows[0][4].plain == "* one\n│    two\n│    three"
+    assert app.table.rows[1][4].plain == "* four\n│    five\n│    six"
+    assert app.table.row_heights[:2] == [3, 3]
+    assert "descriptions toggled" in _toast_text(app)
+
+
+def test_editor_ctrl_shift_d_toggles_all_hidden_descriptions() -> None:
+    app = create_editor_app(
+        Document(
+            Roadmap(
+                [
+                    Task("one\ntwo\nthree"),
+                    TaskGroup("group\ntwo\nthree", tasks=[Task("child")]),
+                    Task("plain"),
+                ]
+            ),
+            "text",
+        )
+    )
+    _wire_fake_widgets(app)
+    app._refresh_table()
+
+    app.action_toggle_all_descriptions_expanded()
+
+    assert app.table.rows[0][4].plain == "one\n│  two\n│  three"
+    assert app.table.rows[1][4].plain == "group\n│  │  two\n│  │  three"
+    assert app.table.row_heights[:2] == [3, 3]
+    assert "descriptions expanded" in _toast_text(app)
+
+    app.action_toggle_all_descriptions_expanded()
+
+    assert app.table.rows[0][4].plain == "one\n│  two"
+    assert app.table.rows[1][4].plain == "group\n│  │  two"
+    assert app.table.row_heights[:2] == [2, 2]
+    assert "descriptions collapsed" in _toast_text(app)
 
 
 def test_editor_wraps_long_descriptions_instead_of_rendering_horizontally() -> None:
@@ -556,8 +619,11 @@ def test_cheatsheet_renderable_lists_all_shortcut_groups() -> None:
     assert "Sorting" in renderable.plain
     assert "Mouse" in renderable.plain
     assert "F1" in renderable.plain
+    assert "Ctrl+D" in renderable.plain
+    assert "Ctrl+Shift+D" in renderable.plain
     assert "Ctrl+S" in renderable.plain
     assert "Delete" in renderable.plain
+    assert "Double right click" in renderable.plain
 
 
 def test_editor_f1_toggles_centered_cheatsheet() -> None:
@@ -1345,19 +1411,24 @@ def test_editor_toggle_group_collapsed_action_and_right_click() -> None:
     assert app.table.rows[0][4].plain == "▸ group\n  "
     assert "group toggled" in _toast_text(app)
 
-    stopped: list[bool] = []
     app.on_mouse_down(
         SimpleNamespace(
             button=3,
             style=SimpleNamespace(meta={"row": 0, "column": 0}),
-            stop=lambda: stopped.append(True),
+            stop=lambda: None,
+        )
+    )
+    app.on_mouse_down(
+        SimpleNamespace(
+            button=3,
+            style=SimpleNamespace(meta={"row": 0, "column": 0}),
+            stop=lambda: None,
         )
     )
     assert [row.description for row in app.state.rows] == ["group", "child"]
-    assert stopped == [True]
 
 
-def test_editor_description_right_click_on_group_toggles_text_not_children() -> None:
+def test_editor_description_right_click_on_group_toggles_text_not_group() -> None:
     app = create_editor_app(
         Document(Roadmap([TaskGroup("one\ntwo\nthree", tasks=[Task("child")])]), "text")
     )
@@ -1375,6 +1446,36 @@ def test_editor_description_right_click_on_group_toggles_text_not_children() -> 
     assert [row.description for row in app.state.rows] == ["one\ntwo\nthree", "child"]
     assert app.table.rows[0][4].plain == "one\n   │  two\n   │  three"
     assert app.table.row_heights[0] == 3
+    assert "description toggled" in _toast_text(app)
+
+
+def test_editor_double_description_right_click_toggles_group_without_expanding_text() -> None:
+    app = create_editor_app(
+        Document(Roadmap([TaskGroup("one\ntwo\nthree", tasks=[Task("child")])]), "text")
+    )
+    _wire_fake_widgets(app)
+    app._refresh_table()
+
+    app.on_mouse_down(
+        SimpleNamespace(
+            button=3,
+            style=SimpleNamespace(meta={"row": 0, "column": 4}),
+            stop=lambda: None,
+        )
+    )
+    app.on_mouse_down(
+        SimpleNamespace(
+            button=3,
+            style=SimpleNamespace(meta={"row": 0, "column": 4}),
+            stop=lambda: None,
+        )
+    )
+
+    assert [row.description for row in app.state.rows] == ["one\ntwo\nthree"]
+    assert app.table.rows[0][4].plain == "▸ one\n  two"
+    assert app.table.row_heights[0] == 2
+    assert id(app.state.rows[0].item) not in app.expanded_description_item_ids
+    assert "group toggled" in _toast_text(app)
 
 
 def test_editor_toggle_all_group_collapsed_alternates_visible_groups() -> None:
@@ -1703,6 +1804,21 @@ def test_textual_pilot_double_click_row_starts_description_editing() -> None:
             assert app.state.selected_path == (1,)
             assert app.editing is True
             assert app.description_area.text == "second"
+
+    asyncio.run(run_pilot())
+
+
+def test_textual_pilot_double_right_click_toggles_group_not_description() -> None:
+    pytest.importorskip("textual")
+    app = create_editor_app(
+        Document(Roadmap([TaskGroup("one\ntwo\nthree", tasks=[Task("child")])]), "text")
+    )
+
+    async def run_pilot() -> None:
+        async with app.run_test(size=(80, 20)) as pilot:
+            await pilot.double_click("#roadmap-grid", offset=(20, 1), button=3)
+            assert [row.description for row in app.state.rows] == ["one\ntwo\nthree"]
+            assert id(app.state.rows[0].item) not in app.expanded_description_item_ids
 
     asyncio.run(run_pilot())
 

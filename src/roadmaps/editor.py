@@ -4,6 +4,7 @@ import textwrap
 from dataclasses import dataclass
 from importlib import import_module
 from pathlib import Path
+from time import monotonic
 from typing import Any
 
 from roadmaps._documents import (
@@ -38,9 +39,9 @@ _PRIORITY_GRADIENT_LOW = "#22c55e"
 _PRIORITY_GRADIENT_MID = "#facc15"
 _PRIORITY_GRADIENT_HIGH = "#ef4444"
 _TABLE_CELL_COUNT = 5
-_DESCRIPTION_COLUMN_INDEX = 4
 _MIN_DESCRIPTION_WIDTH = 20
 _FIXED_TABLE_WIDTH = 46
+_RIGHT_CLICK_DOUBLE_CLICK_SECONDS = 0.5
 
 NotificationSeverity = str
 
@@ -85,7 +86,8 @@ def create_editor_app(document: Document) -> Any:
             self.app.action_edit_description()
 
         async def _on_click(self, event: Any) -> None:
-            if getattr(event, "button", None) == 1 and getattr(event, "chain", 1) >= 2:
+            button = getattr(event, "button", None)
+            if button == 1 and getattr(event, "chain", 1) >= 2:
                 row_index = self.app._event_table_row_index(event)
                 if row_index is not None:
                     self.app._cancel_prompt()
@@ -188,6 +190,8 @@ def create_editor_app(document: Document) -> Any:
             ("ctrl+g", "group_rows", "Group rows"),
             ("ctrl+t", "toggle_group_collapsed", "Toggle group"),
             ("ctrl+shift+t", "toggle_all_group_collapsed", "Toggle all groups"),
+            ("ctrl+d", "toggle_description_expanded", "Toggle description"),
+            ("ctrl+shift+d", "toggle_all_descriptions_expanded", "Toggle descriptions"),
             ("delete", "delete_rows", "Delete rows"),
             ("o", "insert_sorted", "New sorted"),
             ("u", "insert_unsorted", "New unsorted"),
@@ -224,6 +228,10 @@ def create_editor_app(document: Document) -> Any:
             self.save_after_prompt_quit = False
             self.pending_save_path: Path | None = None
             self.pending_save_format: str | None = None
+            self._last_right_click_description_toggle_path: tuple[int, ...] | None = None
+            self._last_right_click_description_toggle_item_id: int | None = None
+            self._last_right_click_path: tuple[int, ...] | None = None
+            self._last_right_click_time = 0.0
 
         def compose(self) -> Any:
             self.top_bar = static(
@@ -431,6 +439,35 @@ def create_editor_app(document: Document) -> Any:
             else:
                 self._set_message("no visible groups changed")
 
+        def action_toggle_description_expanded(self) -> None:
+            if self.prompt_kind is not None or self.editing:
+                return
+            self._sync_selection_from_table_cursor()
+            rows = self.state.selected_rows if self.state.selected_paths else [self.state.selected_row]
+            changed = self._toggle_description_rows_expanded([row for row in rows if row is not None])
+            if changed:
+                self._refresh_table()
+                self._set_message("description toggled" if changed == 1 else "descriptions toggled")
+            else:
+                self._set_message("description already fully visible")
+
+        def action_toggle_all_descriptions_expanded(self) -> None:
+            if self.prompt_kind is not None or self.editing:
+                return
+            rows = self._rows_with_hidden_descriptions(self.state.rows)
+            if not rows:
+                self._set_message("descriptions already fully visible")
+                return
+            item_ids = {id(row.item) for row in rows}
+            if any(item_id not in self.expanded_description_item_ids for item_id in item_ids):
+                self.expanded_description_item_ids.update(item_ids)
+                message = "descriptions expanded"
+            else:
+                self.expanded_description_item_ids.difference_update(item_ids)
+                message = "descriptions collapsed"
+            self._refresh_table()
+            self._set_message(message)
+
         def action_delete_rows(self) -> None:
             if self.prompt_kind is not None or self.editing:
                 return
@@ -600,21 +637,43 @@ def create_editor_app(document: Document) -> Any:
             row_index = self._event_table_row_index(event)
             if row_index is None:
                 return
-            self._sync_selection_from_cursor_row(row_index)
-            if self._event_table_column_index(event) == _DESCRIPTION_COLUMN_INDEX:
-                if self._toggle_selected_description_expanded():
-                    self._refresh_table()
-                    self._set_message("description toggled")
-                else:
-                    self._set_message("description already fully visible")
-            elif self.state.toggle_selected_group_collapsed():
-                self._refresh_table()
-                self._set_message("group toggled")
-            else:
-                self._set_message("selected row is not a group")
+            self._handle_row_right_click(row_index, double=self._is_double_right_click(row_index))
             stop = getattr(event, "stop", None)
             if stop is not None:
                 stop()
+
+        def _handle_row_right_click(self, row_index: int, *, double: bool) -> None:
+            self._sync_selection_from_cursor_row(row_index)
+            if double:
+                undone_description_toggle = self._undo_prior_right_click_description_toggle()
+                if self.state.toggle_selected_group_collapsed():
+                    self._refresh_table()
+                    self._set_message("group toggled")
+                else:
+                    if undone_description_toggle:
+                        self._refresh_table()
+                    self._set_message("selected row is not a group")
+            elif self._toggle_selected_description_expanded():
+                row = self.state.selected_row
+                self._last_right_click_description_toggle_path = row.path if row is not None else None
+                self._last_right_click_description_toggle_item_id = id(row.item) if row is not None else None
+                self._refresh_table()
+                self._set_message("description toggled")
+            else:
+                self._last_right_click_description_toggle_path = None
+                self._last_right_click_description_toggle_item_id = None
+                self._set_message("description already fully visible")
+
+        def _is_double_right_click(self, row_index: int) -> bool:
+            path = self.state.rows[row_index].path
+            now = monotonic()
+            double = (
+                self._last_right_click_path == path
+                and now - self._last_right_click_time <= _RIGHT_CLICK_DOUBLE_CLICK_SECONDS
+            )
+            self._last_right_click_path = None if double else path
+            self._last_right_click_time = 0.0 if double else now
+            return double
 
         def key_escape(self) -> None:
             if self.cheatsheet_visible:
@@ -1074,11 +1133,44 @@ def create_editor_app(document: Document) -> Any:
                 return None
             return row_index
 
-        def _event_table_column_index(self, event: Any) -> int | None:
-            style = getattr(event, "style", None)
-            meta = getattr(style, "meta", None) if style is not None else None
-            column_index = meta.get("column") if isinstance(meta, dict) else None
-            return column_index if isinstance(column_index, int) else None
+        def _rows_with_hidden_descriptions(self, rows: list[EditorRow]) -> list[EditorRow]:
+            all_rows = self.state.rows
+            return [
+                row
+                for row in rows
+                if _description_has_hidden_content(row, all_rows, self.size.width)
+            ]
+
+        def _toggle_description_rows_expanded(self, rows: list[EditorRow]) -> int:
+            changed = 0
+            for row in rows:
+                if not _description_has_hidden_content(row, self.state.rows, self.size.width):
+                    self.expanded_description_item_ids.discard(id(row.item))
+                    continue
+                item_id = id(row.item)
+                if item_id in self.expanded_description_item_ids:
+                    self.expanded_description_item_ids.remove(item_id)
+                else:
+                    self.expanded_description_item_ids.add(item_id)
+                changed += 1
+            return changed
+
+        def _undo_prior_right_click_description_toggle(self) -> bool:
+            row = self.state.selected_row
+            if row is None:
+                self._last_right_click_description_toggle_path = None
+                self._last_right_click_description_toggle_item_id = None
+                return False
+            if (
+                self._last_right_click_description_toggle_path != row.path
+                or self._last_right_click_description_toggle_item_id != id(row.item)
+            ):
+                self._last_right_click_description_toggle_path = None
+                self._last_right_click_description_toggle_item_id = None
+                return False
+            self._last_right_click_description_toggle_path = None
+            self._last_right_click_description_toggle_item_id = None
+            return bool(self._toggle_selected_description_expanded())
 
         def _toggle_selected_description_expanded(self) -> bool:
             row = self.state.selected_row
@@ -1275,6 +1367,8 @@ _CHEATSHEET_GROUPS: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
             ("Ctrl+G", "group marked rows or convert task"),
             ("Ctrl+T", "toggle focused group"),
             ("Ctrl+Shift+T", "expand or collapse visible groups"),
+            ("Ctrl+D", "toggle focused or marked descriptions"),
+            ("Ctrl+Shift+D", "expand or collapse long descriptions"),
             ("Delete", "delete selected rows after confirmation"),
             ("Ctrl+S", "save roadmap"),
             ("Q", "quit editor"),
@@ -1314,7 +1408,8 @@ _CHEATSHEET_GROUPS: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
         "Mouse",
         (
             ("Double click", "edit row description"),
-            ("Right click", "toggle focused group"),
+            ("Right click", "toggle long description"),
+            ("Double right click", "toggle focused group"),
         ),
     ),
 )
