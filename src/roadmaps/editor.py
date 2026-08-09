@@ -1680,7 +1680,10 @@ def _tree_description_parts(
     marker_padding = " " * len(marker + collapsed)
     has_visible_child = row.path in parent_paths
     if row.depth == 0:
-        continuation_prefix = "│  " if has_visible_child else ""
+        has_later_sibling = _has_later_sibling(sibling_indexes, (), row.path[0])
+        continuation_prefix = "│  " if has_later_sibling else "   " if has_visible_child else ""
+        if has_visible_child:
+            continuation_prefix += "│  "
         return marker + collapsed, continuation_prefix + marker_padding, row.description
 
     prefix = ""
@@ -1689,13 +1692,15 @@ def _tree_description_parts(
         ancestor_index = row.path[depth]
         if _has_later_sibling(sibling_indexes, ancestor_parent, ancestor_index):
             prefix += "│  "
-        elif depth > 0:
+        else:
             prefix += "   "
 
     parent_path = row.path[:-1]
     has_later_sibling = _has_later_sibling(sibling_indexes, parent_path, row.path[-1])
     branch = "├─ " if has_later_sibling else "└─ "
-    continuation_branch = "│  " if has_later_sibling or has_visible_child else "   "
+    continuation_branch = "│  " if has_later_sibling else "   "
+    if has_visible_child:
+        continuation_branch += "│  "
     return (
         f"{prefix}{branch}{marker}{collapsed}",
         f"{prefix}{continuation_branch}{marker_padding}",

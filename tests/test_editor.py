@@ -187,7 +187,7 @@ def test_tree_description_uses_visible_tree_guides() -> None:
     assert descriptions[(0, 0)] == "│  ├─ first child"
     assert descriptions[(0, 1)] == "│  └─ second child"
     assert descriptions[(0, 1, 0)] == "│     └─ grandchild"
-    assert descriptions[(1, 0)] == "└─ last child"
+    assert descriptions[(1, 0)] == "   └─ last child"
 
 
 def test_tree_description_ignores_hidden_completed_rows() -> None:
@@ -209,7 +209,7 @@ def test_tree_description_ignores_hidden_completed_rows() -> None:
     )
     app.state.hide_completed = True
 
-    assert _tree_descriptions(app.state.rows)[(0, 0)] == "└─ visible"
+    assert _tree_descriptions(app.state.rows)[(0, 0)] == "   └─ visible"
 
 
 def test_tree_description_marks_selected_and_collapsed_rows() -> None:
@@ -337,6 +337,27 @@ def test_editor_wrapped_last_child_description_uses_spaced_continuation() -> Non
     assert lines[1].startswith("│     alpha")
 
 
+def test_editor_wrapped_parent_description_continues_to_later_sibling_and_child() -> None:
+    app = create_editor_app(
+        Document(
+            Roadmap(
+                [
+                    TaskGroup("alpha " * 20, tasks=[Task("child")]),
+                    Task("later"),
+                ]
+            ),
+            "text",
+        )
+    )
+    _wire_fake_widgets(app)
+
+    app._refresh_table()
+
+    lines = app.table.rows[0][4].plain.splitlines()
+    assert lines[0].startswith("alpha")
+    assert lines[1].startswith("│  │  alpha")
+
+
 def test_editor_one_line_child_description_continues_tree_guides() -> None:
     app = create_editor_app(
         Document(
@@ -385,8 +406,45 @@ def test_editor_one_line_parent_description_continues_to_visible_child() -> None
 
     app._refresh_table()
 
-    assert app.table.rows[0][4].plain == "parent\n│  "
+    assert app.table.rows[0][4].plain == "parent\n   │  "
     assert app.table.row_heights[0] == 2
+
+
+def test_editor_last_root_child_description_is_padded_from_root_siblings() -> None:
+    app = create_editor_app(
+        Document(Roadmap([Task("first"), TaskGroup("parent", tasks=[Task("child")])]), "text")
+    )
+    _wire_fake_widgets(app)
+
+    app._refresh_table()
+
+    assert app.table.rows[2][4].plain == "   └─ child\n      "
+    assert app.table.row_heights[2] == 2
+
+
+def test_editor_one_line_parent_description_continues_to_later_sibling_and_child() -> None:
+    app = create_editor_app(
+        Document(Roadmap([TaskGroup("parent", tasks=[Task("child")]), Task("later")]), "text")
+    )
+    _wire_fake_widgets(app)
+
+    app._refresh_table()
+
+    assert app.table.rows[0][4].plain == "parent\n│  │  "
+    assert app.table.row_heights[0] == 2
+
+
+def test_editor_multiline_parent_description_continues_to_later_sibling_and_child() -> None:
+    app = create_editor_app(
+        Document(Roadmap([TaskGroup("one\ntwo\nthree", tasks=[Task("child")]), Task("later")]), "text")
+    )
+    _wire_fake_widgets(app)
+    app.expanded_description_item_ids.add(id(app.state.rows[0].item))
+
+    app._refresh_table()
+
+    assert app.table.rows[0][4].plain == "one\n│  │  two\n│  │  three"
+    assert app.table.row_heights[0] == 3
 
 
 def test_editor_one_line_nested_parent_description_continues_to_visible_child() -> None:
@@ -408,7 +466,7 @@ def test_editor_one_line_nested_parent_description_continues_to_visible_child() 
 
     app._refresh_table()
 
-    assert app.table.rows[1][4].plain == "│  └─ parent\n│  │  "
+    assert app.table.rows[1][4].plain == "│  └─ parent\n│     │  "
     assert app.table.row_heights[1] == 2
 
 
@@ -1315,7 +1373,7 @@ def test_editor_description_right_click_on_group_toggles_text_not_children() -> 
     )
 
     assert [row.description for row in app.state.rows] == ["one\ntwo\nthree", "child"]
-    assert app.table.rows[0][4].plain == "one\n│  two\n│  three"
+    assert app.table.rows[0][4].plain == "one\n   │  two\n   │  three"
     assert app.table.row_heights[0] == 3
 
 
