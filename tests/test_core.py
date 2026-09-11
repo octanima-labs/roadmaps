@@ -5,6 +5,8 @@ import pytest
 from roadmaps import (
     COMPLETED,
     DEFAULT_PRIORITY,
+    DEFAULT_TASK_DESCRIPTION,
+    DEFAULT_TASK_GROUP_DESCRIPTION,
     MAX_PRIORITY,
     NOT_STARTED,
     ONGOING,
@@ -43,6 +45,18 @@ def test_task_description_allows_inline_markdown_text() -> None:
     task = Task(description)
 
     assert task.description == description
+
+
+def test_task_description_strips_outer_whitespace() -> None:
+    task = Task("  first line\n  second line  ")
+
+    assert task.description == "first line\n  second line"
+
+
+def test_task_group_description_strips_outer_whitespace() -> None:
+    group = TaskGroup("  group  ", tasks=[Task("child")])
+
+    assert group.description == "group"
 
 
 @pytest.mark.parametrize(
@@ -249,7 +263,7 @@ def test_task_group_dates_are_derived_from_descendant_leaf_tasks() -> None:
     assert group.completion_date == second_done
 
 
-def test_next_step_returns_incomplete_leaf_tasks_in_priority_order() -> None:
+def test_next_returns_counted_incomplete_leaf_tasks_in_priority_order() -> None:
     roadmap = Roadmap(
         [
             Task("unordered"),
@@ -262,7 +276,8 @@ def test_next_step_returns_incomplete_leaf_tasks_in_priority_order() -> None:
         ]
     )
 
-    assert [task.description for task in roadmap.next_step()] == [
+    assert [task.description for task in roadmap.next()] == ["high priority"]
+    assert [task.description for task in roadmap.next(count=6)] == [
         "high priority",
         "nested priority",
         "ongoing",
@@ -270,6 +285,48 @@ def test_next_step_returns_incomplete_leaf_tasks_in_priority_order() -> None:
         "ordered later",
         "unordered",
     ]
+    assert [task.description for task in roadmap.next_step()] == ["high priority"]
+
+
+def test_next_ranks_optional_after_mandatory_only_at_equal_priority() -> None:
+    roadmap = Roadmap(
+        [
+            Task("mandatory"),
+            Task("optional", optional=True),
+            Task("urgent", priority=MAX_PRIORITY),
+        ]
+    )
+
+    assert [task.description for task in roadmap.next(count=3)] == [
+        "urgent",
+        "mandatory",
+        "optional",
+    ]
+
+
+def test_task_group_next_uses_group_subtree_only() -> None:
+    group = TaskGroup(
+        "group",
+        tasks=[Task("group first", priority=10), Task("group second")],
+    )
+    roadmap = Roadmap([Task("roadmap urgent", priority=MAX_PRIORITY), group])
+
+    assert [task.description for task in group.next(count=2)] == [
+        "group first",
+        "group second",
+    ]
+    assert [task.description for task in roadmap.next(count=2)] == [
+        "roadmap urgent",
+        "group first",
+    ]
+
+
+@pytest.mark.parametrize("count", [0, -1, 1.0, "1", True, False])
+def test_next_rejects_invalid_counts(count: object) -> None:
+    roadmap = Roadmap([Task("task")])
+
+    with pytest.raises(ValueError, match="count"):
+        roadmap.next(count)  # type: ignore[arg-type]
 
 
 def test_filter_items_matches_groups_and_tasks_in_traversal_order() -> None:
@@ -359,6 +416,21 @@ def test_task_to_group_preserves_metadata_and_drops_completion() -> None:
     assert group.tasks == [child]
 
 
+@pytest.mark.parametrize("description", ["", None])
+def test_task_to_group_uses_default_description_for_invalid_source_description(
+    description: object,
+) -> None:
+    task = Task("original", order=2, priority=MAX_PRIORITY, milestone=3)
+    task.description = description  # type: ignore[assignment]
+
+    group = task.to_group()
+
+    assert group.description == DEFAULT_TASK_GROUP_DESCRIPTION
+    assert group.order == 2
+    assert group.priority == MAX_PRIORITY
+    assert group.milestone == 3
+
+
 def test_group_to_task_preserves_metadata_and_uses_derived_status() -> None:
     group = TaskGroup(
         "group",
@@ -376,6 +448,36 @@ def test_group_to_task_preserves_metadata_and_uses_derived_status() -> None:
     assert task.status == ONGOING
     assert task.completion == 0.0
     assert task.milestone == 2
+
+
+@pytest.mark.parametrize("description", ["", None])
+def test_group_to_task_uses_default_description_for_invalid_source_description(
+    description: object,
+) -> None:
+    group = TaskGroup("group", order=2, priority=MAX_PRIORITY, milestone=3)
+    group.description = description  # type: ignore[assignment]
+
+    task = group.to_task()
+
+    assert task.description == DEFAULT_TASK_DESCRIPTION
+    assert task.order == 2
+    assert task.priority == MAX_PRIORITY
+    assert task.milestone == 3
+
+
+@pytest.mark.parametrize("description", ["", None])
+def test_roadmap_group_to_task_repairs_invalid_group_description(
+    description: object,
+) -> None:
+    group = TaskGroup("group", order=2, tasks=[Task("child")])
+    group.description = description  # type: ignore[assignment]
+    roadmap = Roadmap([group])
+
+    task = roadmap.group_to_task(group)
+
+    assert task.description == DEFAULT_TASK_DESCRIPTION
+    assert task.order == 2
+    assert roadmap.steps == [task, Task("child")]
 
 
 def test_roadmap_task_to_group_replaces_nested_task_by_identity() -> None:
@@ -433,6 +535,58 @@ def test_conversion_helpers_raise_when_target_is_not_found() -> None:
 
     with pytest.raises(ValueError, match="not found"):
         roadmap.group_to_task(TaskGroup("missing"))
+
+
+def test_delete_item_removes_path_and_renumbers_sorted_siblings() -> None:
+    first = Task("first", order=1)
+    loose = Task("loose")
+    second = Task("second", order=2)
+    third = Task("third", order=3)
+    roadmap = Roadmap([first, loose, second, third])
+
+    deleted = roadmap.delete_item((2,))
+
+    assert deleted is second
+    assert roadmap.steps == [first, loose, third]
+    assert [step.order for step in roadmap.steps] == [1, UNSORTED, 2]
+
+
+def test_delete_item_removes_nested_path_and_converts_empty_parent() -> None:
+    child = Task("child", order=1)
+    group = TaskGroup("group", order=1, priority=5, milestone=3, tasks=[child])
+    after = Task("after", order=2)
+    roadmap = Roadmap([group, after])
+
+    deleted = roadmap.delete_item((0, 0))
+
+    assert deleted is child
+    assert isinstance(roadmap.steps[0], Task)
+    assert not isinstance(roadmap.steps[0], TaskGroup)
+    assert roadmap.steps[0] == Task("group", order=1, priority=5, milestone=3)
+    assert roadmap.steps == [roadmap.steps[0], after]
+    assert [step.order for step in roadmap.steps] == [1, 2]
+
+
+def test_delete_item_renumbers_nested_siblings_without_converting_nonempty_parent() -> None:
+    first = Task("first", order=1)
+    second = Task("second", order=2)
+    loose = Task("loose")
+    group = TaskGroup("group", tasks=[first, second, loose])
+    roadmap = Roadmap([group])
+
+    deleted = roadmap.delete_item((0, 0))
+
+    assert deleted is first
+    assert group.tasks == [second, loose]
+    assert [task.order for task in group.tasks] == [1, UNSORTED]
+
+
+@pytest.mark.parametrize("path", [(), (2,), (-1,), (0, 0), [0], (True,)])
+def test_delete_item_rejects_invalid_paths(path: object) -> None:
+    roadmap = Roadmap([Task("task")])
+
+    with pytest.raises(ValueError, match="path|range|leaf"):
+        roadmap.delete_item(path)  # type: ignore[arg-type]
 
 
 def test_converted_items_round_trip_through_formats() -> None:

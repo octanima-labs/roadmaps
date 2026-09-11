@@ -17,6 +17,8 @@ from roadmaps._validation import (
 from roadmaps.constants import (
     COMPLETED,
     DEFAULT_PRIORITY,
+    DEFAULT_TASK_DESCRIPTION,
+    DEFAULT_TASK_GROUP_DESCRIPTION,
     NO_MILESTONE,
     NOT_STARTED,
     ONGOING,
@@ -24,6 +26,8 @@ from roadmaps.constants import (
     UNSORTED,
     VALID_STATUSES,
 )
+
+ItemPath = tuple[int, ...]
 
 
 @dataclass(init=False)
@@ -65,6 +69,7 @@ class Task:
         if not isinstance(self.description, str) or not self.description.strip():
             msg = "description must be a non-empty string"
             raise ValueError(msg)
+        self.description = self.description.strip()
         _validate_description(self.description, "description", ValueError)
         if self.order < UNSORTED:
             msg = "order must be UNSORTED or a non-negative integer"
@@ -190,7 +195,7 @@ class Task:
         tasks: Iterable[Task | TaskGroup] | None = None,
     ) -> TaskGroup:
         return TaskGroup(
-            self.description,
+            _description_or_default_group(self.description),
             order=self.order,
             priority=self.priority,
             optional=self.optional,
@@ -330,6 +335,9 @@ class TaskGroup(Task):
     def leaf_tasks(self) -> list[Task]:
         return list(_leaf_tasks(self.tasks))
 
+    def next(self, count: int = 1) -> list[Task]:
+        return _next_tasks(self.leaf_tasks(), count)
+
     def mark_not_started(self) -> None:
         for task in self.tasks:
             task.mark_not_started()
@@ -354,7 +362,7 @@ class TaskGroup(Task):
 
     def to_task(self) -> Task:
         return Task(
-            self.description,
+            _description_or_default_task(self.description),
             order=self.order,
             priority=self.priority,
             status=self.status,
@@ -440,6 +448,12 @@ class Roadmap:
             raise ValueError(msg)
         return task
 
+    def delete_item(self, path: ItemPath) -> Task | TaskGroup:
+        _validate_item_path(path)
+        deleted = _delete_item_at_path(self.steps, path)
+        _renumber_sorted_siblings(self.steps)
+        return deleted
+
     def leaf_tasks(self) -> list[Task]:
         return list(_leaf_tasks(self.steps))
 
@@ -498,11 +512,11 @@ class Roadmap:
             if _matches_filter_item(item, status_filter, optional, category_set)
         ]
 
+    def next(self, count: int = 1) -> list[Task]:
+        return _next_tasks(self.leaf_tasks(), count)
+
     def next_step(self) -> list[Task]:
-        return sorted(
-            (task for task in self.leaf_tasks() if task.status != COMPLETED),
-            key=_next_step_key,
-        )
+        return self.next()
 
     def to_dict(self) -> dict[str, Any]:
         from roadmaps.serializers import JsonSerializer
@@ -661,8 +675,83 @@ def _group_to_task_in_items(
     return None
 
 
-def _next_step_key(task: Task) -> tuple[int, int, int, int]:
+def _delete_item_at_path(
+    items: list[Task | TaskGroup],
+    path: ItemPath,
+) -> Task | TaskGroup:
+    index = path[0]
+    if index >= len(items):
+        msg = "path index is out of range"
+        raise ValueError(msg)
+    if len(path) == 1:
+        return items.pop(index)
+
+    parent = items[index]
+    if not isinstance(parent, TaskGroup):
+        msg = "path descends through a leaf task"
+        raise ValueError(msg)  # noqa: TRY004 - public path API reports invalid paths as ValueError.
+
+    deleted = _delete_item_at_path(parent.tasks, path[1:])
+    if not parent.tasks:
+        items[index] = parent.to_task()
+    else:
+        _renumber_sorted_siblings(parent.tasks)
+    _renumber_sorted_siblings(items)
+    return deleted
+
+
+def _validate_item_path(path: ItemPath) -> None:
+    if not isinstance(path, tuple) or not path:
+        msg = "path must be a non-empty tuple of zero-based indexes"
+        raise ValueError(msg)
+    if any(isinstance(index, bool) or not isinstance(index, int) or index < 0 for index in path):
+        msg = "path must be a non-empty tuple of zero-based indexes"
+        raise ValueError(msg)
+
+
+def _renumber_sorted_siblings(siblings: list[Task | TaskGroup]) -> None:
+    order = 1
+    for item in siblings:
+        if item.order == UNSORTED:
+            continue
+        item.order = order
+        order += 1
+
+
+def _next_tasks(tasks: Iterable[Task], count: int) -> list[Task]:
+    count = _validated_next_count(count)
+    ranked = sorted(
+        (task for task in tasks if task.status != COMPLETED),
+        key=_next_step_key,
+    )
+    return ranked[:count]
+
+
+def _description_or_default_group(description: object) -> str:
+    if isinstance(description, str) and description.strip():
+        return description
+    return DEFAULT_TASK_GROUP_DESCRIPTION
+
+
+def _description_or_default_task(description: object) -> str:
+    if isinstance(description, str) and description.strip():
+        return description
+    return DEFAULT_TASK_DESCRIPTION
+
+
+def _validated_next_count(count: int) -> int:
+    if isinstance(count, bool) or not isinstance(count, int):
+        msg = "count must be an integer greater than or equal to 1"
+        raise ValueError(msg)  # noqa: TRY004 - public API uses ValueError for all invalid counts.
+    if count < 1:
+        msg = "count must be an integer greater than or equal to 1"
+        raise ValueError(msg)
+    return count
+
+
+def _next_step_key(task: Task) -> tuple[int, int, int, int, int]:
+    optional_rank = 1 if task.is_optional() else 0
     status_rank = 0 if task.status == ONGOING else 1
     order_rank = 0 if task.order != UNSORTED else 1
     order_value = task.order if task.order != UNSORTED else 0
-    return (-task.priority, status_rank, order_rank, order_value)
+    return (-task.priority, optional_rank, status_rank, order_rank, order_value)

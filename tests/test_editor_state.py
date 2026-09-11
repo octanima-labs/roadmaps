@@ -3,6 +3,7 @@ import pytest
 from roadmaps import (
     COMPLETED,
     DEFAULT_PRIORITY,
+    DEFAULT_TASK_GROUP_DESCRIPTION,
     MAX_PRIORITY,
     NOT_STARTED,
     ONGOING,
@@ -42,12 +43,102 @@ def test_rows_expose_display_fields_and_initial_selection() -> None:
         ((0, 0), 1, "urgent"),
         ((1,), 0, "optional"),
     ]
-    assert state.rows[0].order_text == "1."
-    assert state.rows[0].completion_text == "0%"
-    assert state.rows[0].milestone_text == "2"
+    assert state.rows[0].order_text == "1"
+    assert state.rows[1].order_text == "1.-"
+    assert state.rows[0].completion_text == "[          ] 0%"
+    assert state.rows[0].milestone_text == "II"
     assert state.rows[0].group is True
     assert state.rows[1].priority_text == "!"
     assert state.rows[2].priority_text == "?"
+
+
+def test_rows_can_disable_tui_order_breadcrumbs(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("roadmaps._editor_state.ENABLE_TUI_ORDER_BREADCRUMBS", False)
+
+    state = EditorState(Roadmap([TaskGroup("group", order=1, tasks=[Task("child")])]))
+
+    assert [row.order_text for row in state.rows] == ["1.", "-"]
+
+
+def test_rows_show_literal_dash_parts_in_tui_order_breadcrumbs() -> None:
+    state = EditorState(
+        Roadmap(
+            [
+                TaskGroup(
+                    "first",
+                    order=1,
+                    tasks=[TaskGroup("nested", order=1, tasks=[Task("loose")])],
+                ),
+                TaskGroup("second", order=12, tasks=[TaskGroup("loose", tasks=[Task("child", order=1)])]),
+                TaskGroup("loose", tasks=[Task("child", order=1)]),
+            ]
+        )
+    )
+
+    assert [row.order_text for row in state.rows] == [
+        "1",
+        "1.1",
+        "1.1.-",
+        "12",
+        "12.-",
+        "12.-.1",
+        "-",
+        "-.1",
+    ]
+
+
+def test_rows_show_progress_bars_with_ascii_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("roadmaps._editor_state.ENABLE_TUI_UNICODE_PROGRESS", False)
+    state = EditorState(Roadmap([Task("task", status=ONGOING, completion=40.0)]))
+
+    assert state.rows[0].completion_text == "[####------] 40%"
+
+
+def test_rows_show_eighth_block_progress_bars() -> None:
+    state = EditorState(
+        Roadmap(
+            [
+                Task("tiny", status=ONGOING, completion=1.0),
+                Task("partial", status=ONGOING, completion=45.0),
+                Task("nearly complete", status=ONGOING, completion=99.0),
+            ]
+        )
+    )
+
+    assert [row.completion_text for row in state.rows] == [
+        "[▏         ] 1%",
+        "[████▌     ] 45%",
+        "[█████████▉] 99%",
+    ]
+
+
+def test_rows_scale_eighth_block_progress_bars_to_configured_width(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("roadmaps._editor_state.TUI_PROGRESS_BAR_WIDTH", 4)
+    state = EditorState(Roadmap([Task("task", status=ONGOING, completion=62.5)]))
+
+    assert state.rows[0].completion_text == "[██▌ ] 62.5%"
+
+
+def test_rows_show_roman_milestones_with_decimal_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    state = EditorState(
+        Roadmap([Task("small", milestone=4), Task("large", milestone=4000)])
+    )
+
+    assert [row.milestone_text for row in state.rows] == ["IV", "4000"]
+
+    monkeypatch.setattr("roadmaps._editor_state.ENABLE_TUI_ROMAN_MILESTONES", False)
+    state = EditorState(Roadmap([Task("small", milestone=4)]))
+    assert state.rows[0].milestone_text == "4"
+
+
+def test_rows_preserve_multiline_descriptions() -> None:
+    state = EditorState(Roadmap([Task("first line\nsecond line")]))
+
+    assert state.rows[0].description == "first line\nsecond line"
 
 
 def test_move_selection_clamps_without_marking_dirty() -> None:
@@ -60,6 +151,28 @@ def test_move_selection_clamps_without_marking_dirty() -> None:
     assert state.move_selection(-10) is True
     assert state.selected_path == (0,)
     assert state.dirty is False
+
+
+def test_extend_selection_uses_focused_row_as_anchor() -> None:
+    state = EditorState(Roadmap([Task("first"), Task("second"), Task("third"), Task("fourth")]))
+    state.select_path((1,))
+
+    assert state.extend_selection(1) is True
+    assert state.selected_path == (2,)
+    assert state.range_anchor_path == (1,)
+    assert state.selected_paths == {(1,), (2,)}
+
+    assert state.extend_selection(1) is True
+    assert state.selected_path == (3,)
+    assert state.range_anchor_path == (1,)
+    assert state.selected_paths == {(1,), (2,), (3,)}
+
+    assert state.extend_selection(-1) is True
+    assert state.selected_path == (2,)
+    assert state.selected_paths == {(1,), (2,)}
+
+    assert state.move_selection(-1) is True
+    assert state.range_anchor_path is None
 
 
 def test_select_path_rejects_non_visible_paths() -> None:
@@ -200,6 +313,69 @@ def test_insert_sorted_task_uses_selected_nested_sibling_level() -> None:
     assert state.selected_path == (0, 1)
 
 
+def test_insert_unsorted_subtask_converts_leaf_to_group_and_inherits_milestone() -> None:
+    state = EditorState(Roadmap([Task("parent", milestone=3)]))
+
+    task = state.insert_unsorted_subtask()
+
+    group = state.roadmap.steps[0]
+    assert isinstance(group, TaskGroup)
+    assert task is group.tasks[0]
+    assert task.description == NEW_TASK_DESCRIPTION
+    assert task.order == UNSORTED
+    assert task.milestone == 3
+    assert state.selected_path == (0, 0)
+    assert state.dirty is True
+
+
+def test_insert_sorted_subtask_appends_to_group_and_renumbers_sorted_children() -> None:
+    group = TaskGroup(
+        "group",
+        milestone=2,
+        tasks=[
+            Task("first", order=1),
+            Task("loose"),
+            Task("second", order=2),
+        ],
+    )
+    state = EditorState(Roadmap([group]))
+
+    task = state.insert_sorted_subtask()
+
+    assert [child.description for child in group.tasks] == [
+        "first",
+        "loose",
+        "second",
+        NEW_TASK_DESCRIPTION,
+    ]
+    assert [child.order for child in group.tasks] == [1, UNSORTED, 2, 3]
+    assert task is group.tasks[3]
+    assert task.milestone == 2
+    assert state.selected_path == (0, 3)
+    assert state.dirty is True
+
+
+def test_insert_subtask_expands_collapsed_parent() -> None:
+    group = TaskGroup("group", tasks=[Task("child")])
+    state = EditorState(Roadmap([group]))
+    assert state.toggle_selected_group_collapsed() is True
+
+    task = state.insert_unsorted_subtask()
+
+    assert task is group.tasks[1]
+    assert state.selected_path == (0, 1)
+    assert [row.description for row in state.rows] == ["group", "child", NEW_TASK_DESCRIPTION]
+
+
+def test_insert_subtask_without_selection_is_noop() -> None:
+    state = EditorState(Roadmap())
+
+    assert state.insert_unsorted_subtask() is None
+    assert state.insert_sorted_subtask() is None
+    assert state.roadmap.steps == []
+    assert state.dirty is False
+
+
 def test_update_selected_description_rejects_completed_rows() -> None:
     state = EditorState(Roadmap([Task("done", status=COMPLETED)]))
 
@@ -215,10 +391,23 @@ def test_update_selected_description_marks_dirty_only_on_change() -> None:
 
     assert state.update_selected_description("old") is False
     assert state.dirty is False
+    assert state.update_selected_description("  old  ") is False
+    assert state.dirty is False
 
-    assert state.update_selected_description("new") is True
+    assert state.update_selected_description("  new  ") is True
     assert state.roadmap.steps[0].description == "new"
     assert state.dirty is True
+
+
+@pytest.mark.parametrize("description", ["", "   ", "\n\t"])
+def test_update_selected_description_rejects_blank_input(description: str) -> None:
+    state = EditorState(Roadmap([Task("old")]))
+
+    with pytest.raises(ValueError, match="non-empty string"):
+        state.update_selected_description(description)
+
+    assert state.roadmap.steps[0].description == "old"
+    assert state.dirty is False
 
 
 def test_update_selected_description_without_selection_is_noop() -> None:
@@ -344,6 +533,57 @@ def test_update_selected_metadata_rejects_completed_rows() -> None:
         state.update_selected_milestone(1)
     with pytest.raises(ValueError, match="completed rows"):
         state.update_selected_priority(1)
+
+
+def test_adjust_selected_priority_uses_focus_or_marked_rows_and_skips_completed() -> None:
+    optional = Task("optional", optional=True)
+    pending = Task("pending")
+    high = Task("high", priority=995)
+    done = Task("done", status=COMPLETED)
+    state = EditorState(Roadmap([optional, pending, high, done]))
+
+    assert state.adjust_selected_priority(1) is True
+    assert optional.optional is False
+    assert optional.priority == DEFAULT_PRIORITY
+
+    assert state.adjust_selected_priority(1) is True
+    assert optional.priority == 1
+
+    assert state.adjust_selected_priority(-10) is True
+    assert optional.optional is True
+    assert optional.priority == OPTIONAL_TASK
+
+    state.selected_paths = {(1,), (2,), (3,)}
+    assert state.adjust_selected_priority(10) is True
+    assert pending.priority == 10
+    assert high.priority == MAX_PRIORITY
+    assert done.priority == DEFAULT_PRIORITY
+    assert state.selected_paths == {(1,), (2,), (3,)}
+
+
+def test_toggle_visible_groups_collapsed_alternates_editor_state() -> None:
+    inner = TaskGroup("inner", tasks=[Task("child")])
+    outer = TaskGroup("outer", tasks=[inner])
+    state = EditorState(Roadmap([outer]))
+    state.collapsed_item_ids = {id(inner)}
+
+    changed, expanded = state.toggle_visible_groups_collapsed()
+    assert changed is True
+    assert expanded is True
+    assert state.collapsed_item_ids == set()
+    assert [row.description for row in state.rows] == ["outer", "inner", "child"]
+
+    changed, expanded = state.toggle_visible_groups_collapsed()
+    assert changed is True
+    assert expanded is False
+    assert state.collapsed_item_ids == {id(outer), id(inner)}
+    assert [row.description for row in state.rows] == ["outer"]
+
+    changed, expanded = state.toggle_visible_groups_collapsed()
+    assert changed is True
+    assert expanded is True
+    assert state.collapsed_item_ids == set()
+    assert [row.description for row in state.rows] == ["outer", "inner", "child"]
 
 
 def test_update_selected_completion_requires_leaf_and_confirmation_flags() -> None:
@@ -752,6 +992,79 @@ def test_group_selected_rows_converts_single_focused_task() -> None:
     group = state.group_selected_rows()
 
     assert group == TaskGroup("task")
+    assert isinstance(state.roadmap.steps[0], TaskGroup)
+    assert state.selected_path == (0,)
+
+
+def test_delete_selected_items_deletes_focused_row_and_repairs_selection() -> None:
+    first = Task("first", order=1)
+    second = Task("second", order=2)
+    third = Task("third", order=3)
+    state = EditorState(Roadmap([first, second, third]))
+    state.select_path((1,))
+
+    deleted = state.delete_selected_items()
+
+    assert deleted == [second]
+    assert state.roadmap.steps == [first, third]
+    assert [step.order for step in state.roadmap.steps] == [1, 2]
+    assert state.selected_path == (1,)
+    assert state.selected_paths == set()
+    assert state.dirty is True
+
+
+def test_delete_selected_items_collapses_nested_marks_to_outer_rows() -> None:
+    group = TaskGroup("group", tasks=[Task("child"), Task("other")])
+    after = Task("after")
+    state = EditorState(Roadmap([group, after]))
+    state.selected_paths = {(0,), (0, 0), (1,)}
+
+    assert state.selected_delete_count() == 2
+    deleted = state.delete_selected_items()
+
+    assert {item.description for item in deleted} == {"group", "after"}
+    assert state.roadmap.steps == []
+    assert state.selected_path is None
+    assert state.selected_paths == set()
+
+
+def test_delete_selected_items_converts_emptied_parent_to_task() -> None:
+    child = Task("child")
+    group = TaskGroup("group", order=1, tasks=[child])
+    state = EditorState(Roadmap([group, Task("after", order=2)]))
+    state.select_path((0, 0))
+
+    deleted = state.delete_selected_items()
+
+    assert deleted == [child]
+    assert isinstance(state.roadmap.steps[0], Task)
+    assert not isinstance(state.roadmap.steps[0], TaskGroup)
+    assert [step.description for step in state.roadmap.steps] == ["group", "after"]
+    assert [step.order for step in state.roadmap.steps] == [1, 2]
+    assert state.selected_path == (1,)
+
+
+def test_delete_selected_items_without_selection_is_noop() -> None:
+    state = EditorState(Roadmap())
+
+    assert state.selected_delete_count() == 0
+    assert state.delete_selected_items() == []
+    assert state.dirty is False
+
+
+@pytest.mark.parametrize("description", ["", None])
+def test_group_selected_rows_repairs_invalid_focused_task_description(
+    description: object,
+) -> None:
+    task = Task("task", order=10)
+    task.description = description  # type: ignore[assignment]
+    state = EditorState(Roadmap([task]))
+
+    group = state.group_selected_rows()
+
+    assert group is not None
+    assert group.description == DEFAULT_TASK_GROUP_DESCRIPTION
+    assert group.order == 10
     assert isinstance(state.roadmap.steps[0], TaskGroup)
     assert state.selected_path == (0,)
 

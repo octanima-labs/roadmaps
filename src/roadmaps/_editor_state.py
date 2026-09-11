@@ -7,11 +7,15 @@ from roadmaps._validation import _validate_description, _validated_task_completi
 from roadmaps.constants import (
     COMPLETED,
     DEFAULT_PRIORITY,
+    ENABLE_TUI_ORDER_BREADCRUMBS,
+    ENABLE_TUI_ROMAN_MILESTONES,
+    ENABLE_TUI_UNICODE_PROGRESS,
     MAX_PRIORITY,
     NO_MILESTONE,
     NOT_STARTED,
     ONGOING,
     OPTIONAL_TASK,
+    TUI_PROGRESS_BAR_WIDTH,
     UNSORTED,
 )
 from roadmaps.model import Roadmap, Task, TaskGroup
@@ -46,6 +50,8 @@ class EditorState:
     dirty: bool = False
     selected_paths: set[Path] = field(default_factory=set)
     collapsed_item_ids: set[int] = field(default_factory=set)
+    range_anchor_path: Path | None = None
+    expand_groups_next: bool = True
 
     def __post_init__(self) -> None:
         self.repair_selection()
@@ -74,6 +80,7 @@ class EditorState:
         if path not in {row.path for row in self.rows}:
             return False
         self.selected_path = path
+        self.range_anchor_path = None
         return True
 
     @property
@@ -84,6 +91,7 @@ class EditorState:
         row = self.selected_row
         if row is None:
             return False
+        self.range_anchor_path = None
         if row.path in self.selected_paths:
             self.selected_paths.remove(row.path)
         else:
@@ -92,6 +100,7 @@ class EditorState:
 
     def clear_row_marks(self) -> None:
         self.selected_paths.clear()
+        self.range_anchor_path = None
 
     def move_selection(self, delta: int) -> bool:
         rows = self.rows
@@ -99,9 +108,11 @@ class EditorState:
             if self.selected_path is None:
                 return False
             self.selected_path = None
+            self.range_anchor_path = None
             return True
         if self.selected_path is None:
             self.selected_path = rows[0].path
+            self.range_anchor_path = None
             return True
 
         paths = [row.path for row in rows]
@@ -109,12 +120,45 @@ class EditorState:
             index = paths.index(self.selected_path)
         except ValueError:
             self.selected_path = rows[0].path
+            self.range_anchor_path = None
             return True
 
         new_index = min(max(index + delta, 0), len(rows) - 1)
         if new_index == index:
             return False
         self.selected_path = rows[new_index].path
+        self.range_anchor_path = None
+        return True
+
+    def extend_selection(self, delta: int) -> bool:
+        rows = self.rows
+        if not rows:
+            return False
+        if self.selected_path is None:
+            self.selected_path = rows[0].path
+            self.range_anchor_path = rows[0].path
+            self.selected_paths = {rows[0].path}
+            return True
+
+        paths = [row.path for row in rows]
+        try:
+            current_index = paths.index(self.selected_path)
+        except ValueError:
+            current_index = 0
+            self.selected_path = rows[0].path
+
+        if self.range_anchor_path not in paths:
+            self.range_anchor_path = self.selected_path
+        anchor_index = paths.index(self.range_anchor_path)
+
+        new_index = min(max(current_index + delta, 0), len(rows) - 1)
+        if new_index == current_index:
+            return False
+
+        self.selected_path = rows[new_index].path
+        start = min(anchor_index, new_index)
+        end = max(anchor_index, new_index)
+        self.selected_paths = {row.path for row in rows[start : end + 1]}
         return True
 
     def toggle_hide_completed(self) -> None:
@@ -142,6 +186,35 @@ class EditorState:
         self.dirty = True
         return task
 
+    def insert_unsorted_subtask(self, description: str = NEW_TASK_DESCRIPTION) -> Task | None:
+        group = self._selected_item_as_group()
+        if group is None:
+            return None
+
+        task = Task(description, order=UNSORTED, milestone=group.milestone)
+        group.tasks.append(task)
+        self.collapsed_item_ids.discard(id(group))
+        self.selected_path = _path_for_item(self.roadmap.steps, task)
+        self.clear_row_marks()
+        self.dirty = True
+        self.repair_selection()
+        return task
+
+    def insert_sorted_subtask(self, description: str = NEW_TASK_DESCRIPTION) -> Task | None:
+        group = self._selected_item_as_group()
+        if group is None:
+            return None
+
+        task = Task(description, order=1, milestone=group.milestone)
+        group.tasks.append(task)
+        _renumber_sorted_siblings(group.tasks)
+        self.collapsed_item_ids.discard(id(group))
+        self.selected_path = _path_for_item(self.roadmap.steps, task)
+        self.clear_row_marks()
+        self.dirty = True
+        self.repair_selection()
+        return task
+
     def update_selected_description(self, description: str) -> bool:
         row = self.selected_row
         if row is None:
@@ -149,6 +222,10 @@ class EditorState:
         if row.completed:
             msg = "completed rows are read-only except status cycling"
             raise ValueError(msg)
+        if not isinstance(description, str) or not description.strip():
+            msg = "description must be a non-empty string"
+            raise ValueError(msg)
+        description = description.strip()
 
         _validate_description(description, "description", ValueError)
         if row.item.description == description:
@@ -253,6 +330,29 @@ class EditorState:
         self.dirty = True
         return group
 
+    def delete_selected_items(self) -> list[Task | TaskGroup]:
+        rows = self.selected_rows or ([self.selected_row] if self.selected_row is not None else [])
+        paths = _outermost_paths([row.path for row in rows if row is not None])
+        if not paths:
+            return []
+
+        previous_rows = self.rows
+        deleted: list[Task | TaskGroup] = []
+        for path in sorted(paths, reverse=True):
+            deleted.append(self.roadmap.delete_item(path))
+        self.clear_row_marks()
+        self.collapsed_item_ids.intersection_update(
+            id(row.item) for row in self.rows if isinstance(row.item, TaskGroup)
+        )
+        self.dirty = True
+        self.repair_selection(previous_rows)
+        return deleted
+
+    def selected_delete_count(self) -> int:
+        if self.selected_paths:
+            return len(_outermost_paths([row.path for row in self.selected_rows]))
+        return 1 if self.selected_row is not None else 0
+
     def convert_selected_task_to_group(self) -> TaskGroup | None:
         row = self.selected_row
         if row is None:
@@ -280,6 +380,42 @@ class EditorState:
         self._repair_row_marks()
         self.repair_selection()
         return True
+
+    def toggle_visible_groups_collapsed(self) -> tuple[bool, bool]:
+        expand = self.expand_groups_next
+        self.expand_groups_next = not self.expand_groups_next
+        group_ids = _group_item_ids(self.roadmap.steps)
+        if not group_ids:
+            return False, expand
+
+        before = set(self.collapsed_item_ids)
+        if expand:
+            self.collapsed_item_ids.difference_update(group_ids)
+        else:
+            self.collapsed_item_ids.update(group_ids)
+        changed = self.collapsed_item_ids != before
+        self._repair_row_marks()
+        self.repair_selection()
+        return changed, expand
+
+    def adjust_selected_priority(self, delta: int) -> bool:
+        rows = self.selected_rows if self.selected_paths else [self.selected_row]
+        changed = False
+        for row in rows:
+            if row is None or row.completed:
+                continue
+            priority = _adjusted_priority(row.item, delta)
+            before = (row.item.priority, row.item.optional)
+            if priority == OPTIONAL_TASK:
+                row.item.set_optional(True)
+            else:
+                row.item.set_optional(False)
+                row.item.set_priority(priority)
+            if (row.item.priority, row.item.optional) != before:
+                changed = True
+        if changed:
+            self.dirty = True
+        return changed
 
     def adjust_selected_completion(
         self,
@@ -476,6 +612,7 @@ class EditorState:
         if not rows:
             self.selected_path = None
             self.selected_paths.clear()
+            self.range_anchor_path = None
             return
 
         if self.selected_path in {row.path for row in rows}:
@@ -554,6 +691,8 @@ class EditorState:
     def _repair_row_marks(self) -> None:
         visible_paths = {row.path for row in self.rows}
         self.selected_paths.intersection_update(visible_paths)
+        if self.range_anchor_path not in visible_paths:
+            self.range_anchor_path = None
 
     def _editable_selected_row(self) -> EditorRow | None:
         row = self.selected_row
@@ -576,6 +715,19 @@ class EditorState:
             return (index,)
         return (*self.selected_path[:-1], index)
 
+    def _selected_item_as_group(self) -> TaskGroup | None:
+        row = self.selected_row
+        if row is None:
+            return None
+        if isinstance(row.item, TaskGroup):
+            return row.item
+
+        siblings, index = _siblings_for_path(self.roadmap, row.path)
+        group = row.item.to_group()
+        siblings[index] = group
+        self.selected_path = _path_for_item(self.roadmap.steps, group)
+        return group
+
 
 def _flatten_rows(
     items: list[Task | TaskGroup],
@@ -583,14 +735,16 @@ def _flatten_rows(
     collapsed_item_ids: set[int],
     selected_paths: set[Path],
     prefix: Path = (),
+    order_prefix: tuple[str, ...] = (),
 ) -> list[EditorRow]:
     rows: list[EditorRow] = []
     for index, item in enumerate(items):
         path = (*prefix, index)
+        order_path = (*order_prefix, _order_part(item))
         if hide_completed and item.status == COMPLETED:
             continue
 
-        rows.append(_row_from_item(item, path, selected_paths, collapsed_item_ids))
+        rows.append(_row_from_item(item, path, order_path, selected_paths, collapsed_item_ids))
         if isinstance(item, TaskGroup) and id(item) not in collapsed_item_ids:
             rows.extend(
                 _flatten_rows(
@@ -599,14 +753,25 @@ def _flatten_rows(
                     collapsed_item_ids,
                     selected_paths,
                     path,
+                    order_path,
                 )
             )
     return rows
 
 
+def _group_item_ids(items: list[Task | TaskGroup]) -> set[int]:
+    group_ids: set[int] = set()
+    for item in items:
+        if isinstance(item, TaskGroup):
+            group_ids.add(id(item))
+            group_ids.update(_group_item_ids(item.tasks))
+    return group_ids
+
+
 def _row_from_item(
     item: Task | TaskGroup,
     path: Path,
+    order_path: tuple[str, ...],
     selected_paths: set[Path],
     collapsed_item_ids: set[int],
 ) -> EditorRow:
@@ -614,10 +779,10 @@ def _row_from_item(
         path=path,
         depth=len(path) - 1,
         item=item,
-        order_text="-" if item.order == UNSORTED else f"{item.order}.",
-        completion_text=item.completion_percent,
+        order_text=_order_text(item, order_path),
+        completion_text=_completion_text(item),
         priority_text=_priority_text(item),
-        milestone_text="" if item.milestone == NO_MILESTONE else str(item.milestone),
+        milestone_text=_milestone_text(item),
         description=item.description,
         status=item.status,
         completed=item.status == COMPLETED,
@@ -625,6 +790,36 @@ def _row_from_item(
         selected=path in selected_paths,
         collapsed=isinstance(item, TaskGroup) and id(item) in collapsed_item_ids,
     )
+
+
+def _order_text(item: Task | TaskGroup, order_path: tuple[str, ...]) -> str:
+    if ENABLE_TUI_ORDER_BREADCRUMBS:
+        return ".".join(order_path)
+    return _order_part(item) if item.order == UNSORTED else f"{item.order}."
+
+
+def _order_part(item: Task | TaskGroup) -> str:
+    return "-" if item.order == UNSORTED else str(item.order)
+
+
+def _completion_text(item: Task | TaskGroup) -> str:
+    completion = max(0.0, min(item.completion, 100.0))
+    width = max(TUI_PROGRESS_BAR_WIDTH, 1)
+    if not ENABLE_TUI_UNICODE_PROGRESS:
+        filled = width if completion >= 100.0 else int(completion * width / 100.0)
+        empty = width - filled
+        return f"[{'#' * filled}{'-' * empty}] {item.completion_percent}"
+
+    max_units = width * 8
+    units = round(completion * max_units / 100.0)
+    if 0.0 < completion < 100.0:
+        units = min(max(units, 1), max_units - 1)
+    else:
+        units = max(0, min(units, max_units))
+    filled, partial = divmod(units, 8)
+    partial_text = "" if partial == 0 else "▏▎▍▌▋▊▉"[partial - 1]
+    empty = width - filled - (1 if partial_text else 0)
+    return f"[{'█' * filled}{partial_text}{' ' * empty}] {item.completion_percent}"
 
 
 def _priority_text(item: Task | TaskGroup) -> str:
@@ -635,6 +830,52 @@ def _priority_text(item: Task | TaskGroup) -> str:
     if item.priority > 0:
         return f"^{item.priority}"
     return ""
+
+
+def _milestone_text(item: Task | TaskGroup) -> str:
+    if item.milestone == NO_MILESTONE:
+        return ""
+    if ENABLE_TUI_ROMAN_MILESTONES:
+        return _roman_milestone(item.milestone)
+    return str(item.milestone)
+
+
+def _roman_milestone(value: int) -> str:
+    if value <= 0 or value > 3999:
+        return str(value)
+    numerals = (
+        (1000, "M"),
+        (900, "CM"),
+        (500, "D"),
+        (400, "CD"),
+        (100, "C"),
+        (90, "XC"),
+        (50, "L"),
+        (40, "XL"),
+        (10, "X"),
+        (9, "IX"),
+        (5, "V"),
+        (4, "IV"),
+        (1, "I"),
+    )
+    result = ""
+    remaining = value
+    for number, numeral in numerals:
+        while remaining >= number:
+            result += numeral
+            remaining -= number
+    return result
+
+
+def _adjusted_priority(item: Task | TaskGroup, delta: int) -> int:
+    if delta == 0:
+        return item.priority
+    if item.priority == OPTIONAL_TASK:
+        return DEFAULT_PRIORITY if delta > 0 else OPTIONAL_TASK
+    priority = item.priority + delta
+    if priority < DEFAULT_PRIORITY:
+        return OPTIONAL_TASK
+    return min(priority, MAX_PRIORITY)
 
 
 def parse_milestone_prompt(value: str) -> int:
@@ -738,6 +979,20 @@ def _visible_sibling_indices(
         for index, item in enumerate(siblings)
         if not (hide_completed and item.status == COMPLETED)
     ]
+
+
+def _outermost_paths(paths: list[Path]) -> list[Path]:
+    unique_paths = sorted(set(paths))
+    outer_paths: list[Path] = []
+    for path in unique_paths:
+        if any(_is_ancestor_path(candidate, path) for candidate in outer_paths):
+            continue
+        outer_paths.append(path)
+    return outer_paths
+
+
+def _is_ancestor_path(candidate: Path, path: Path) -> bool:
+    return len(candidate) < len(path) and path[: len(candidate)] == candidate
 
 
 def _path_for_item(
