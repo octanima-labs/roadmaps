@@ -626,6 +626,10 @@ def test_cheatsheet_renderable_lists_all_shortcut_groups() -> None:
     assert "Ctrl+D" in renderable.plain
     assert "Ctrl+Shift+D" in renderable.plain
     assert "Ctrl+S" in renderable.plain
+    assert "Ctrl+Q" in renderable.plain
+    assert "Exit" in renderable.plain
+    assert "C" in renderable.plain
+    assert "copy focused or marked descriptions" in renderable.plain
     assert "Delete" in renderable.plain
     assert "Double right click" in renderable.plain
 
@@ -674,6 +678,20 @@ def test_editor_cheatsheet_opens_read_only_over_description_edit() -> None:
     assert app.cheatsheet_visible is True
     assert app.editing is True
     assert app.description_area.text == "draft"
+
+
+def test_editor_ctrl_c_hint_shows_warning_toast_without_quitting() -> None:
+    app = create_editor_app(Document(Roadmap([Task("first")]), "text"))
+    _wire_fake_widgets(app)
+    app.state.dirty = True
+    exited: list[bool] = []
+    app.exit = lambda: exited.append(True)
+
+    app.action_help_quit()
+
+    assert "Press ctrl+q to quit the app" in _toast_text(app)
+    assert app.prompt_kind is None
+    assert exited == []
 
 
 def test_editor_notifications_render_severity_colors_and_clear_idle_bar() -> None:
@@ -1330,6 +1348,50 @@ def test_editor_shift_selection_and_escape_clear_marks() -> None:
     app.key_escape()
     assert app.state.selected_paths == set()
     assert "row selection cleared" in _toast_text(app)
+
+
+def test_editor_copy_description_copies_focused_row() -> None:
+    app = create_editor_app(Document(Roadmap([Task("first"), Task("second")]), "text"))
+    _wire_fake_widgets(app)
+    app._refresh_table()
+    app.action_cursor_down()
+
+    app.action_copy_descriptions()
+
+    assert app.clipboard == "second"
+    assert "description copied" in _toast_text(app)
+    assert app.state.dirty is False
+
+
+def test_editor_copy_description_copies_marked_rows_in_visible_order() -> None:
+    app = create_editor_app(
+        Document(Roadmap([Task("first"), Task("second"), Task("third")]), "text")
+    )
+    _wire_fake_widgets(app)
+    app._refresh_table()
+    app.action_cursor_down()
+    app.action_toggle_row_mark()
+    app.action_cursor_down()
+    app.action_toggle_row_mark()
+    app.action_cursor_up()
+
+    app.action_copy_descriptions()
+
+    assert app.clipboard == "second\nthird"
+    assert "2 descriptions copied" in _toast_text(app)
+    assert app.state.selected_path == (1,)
+    assert app.state.dirty is False
+
+
+def test_editor_copy_description_without_selection_shows_message() -> None:
+    app = create_editor_app(Document(Roadmap(), "text"))
+    _wire_fake_widgets(app)
+    app._refresh_table()
+
+    app.action_copy_descriptions()
+
+    assert app.clipboard == ""
+    assert "no row selected" in _toast_text(app)
 
 
 def test_editor_priority_shortcuts_update_focus_or_marked_rows() -> None:

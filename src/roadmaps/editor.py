@@ -171,6 +171,7 @@ def create_editor_app(document: Document) -> Any:
             ("shift+up", "select_up", "Select up"),
             ("shift+down", "select_down", "Select down"),
             ("enter", "edit_description", "Edit"),
+            ("c", "copy_descriptions", "Copy"),
             ("m", "edit_milestone", "Milestone"),
             ("p", "edit_priority", "Priority"),
             ("alt+up", "increase_priority", "Priority +1"),
@@ -398,6 +399,22 @@ def create_editor_app(document: Document) -> Any:
             else:
                 self._set_message("no row selected")
 
+        def action_copy_descriptions(self) -> None:
+            if self.prompt_kind is not None or self.editing:
+                return
+            self._sync_selection_from_table_cursor()
+            rows = self.state.selected_rows if self.state.selected_paths else [self.state.selected_row]
+            descriptions = [row.description for row in rows if row is not None]
+            if not descriptions:
+                self._set_message("no row selected")
+                return
+            self.copy_to_clipboard("\n".join(descriptions))
+            self._set_message(
+                "description copied"
+                if len(descriptions) == 1
+                else f"{len(descriptions)} descriptions copied"
+            )
+
         def action_group_rows(self) -> None:
             if self.prompt_kind is not None or self.editing:
                 return
@@ -612,6 +629,9 @@ def create_editor_app(document: Document) -> Any:
                 "exit-save-confirm",
                 "Save changes before exit? (Y/n/c)",
             )
+
+        def action_help_quit(self) -> None:
+            self._notify_warning("Press ctrl+q to quit the app")
 
         def on_input_submitted(self, event: Any) -> None:
             if event.input is self.edit_input:
@@ -1355,6 +1375,7 @@ _CHEATSHEET_GROUPS: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
             ("Shift+Up / Shift+Down", "extend row selection"),
             ("Space", "mark or unmark focused row"),
             ("Enter", "edit focused description"),
+            ("C", "copy focused or marked descriptions"),
             ("Ctrl+H", "toggle completed rows"),
         ),
     ),
@@ -1372,7 +1393,7 @@ _CHEATSHEET_GROUPS: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
             ("Ctrl+Shift+D", "expand or collapse long descriptions"),
             ("Delete", "delete selected rows after confirmation"),
             ("Ctrl+S", "save roadmap"),
-            ("Q", "quit editor"),
+            ("Q / Ctrl+Q", "Exit"),
         ),
     ),
     (

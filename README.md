@@ -8,28 +8,42 @@ The current package is alpha software. The CLI can inspect, convert, initialize,
 
 ## Installation
 
-This package is not published yet. Install it from a local clone:
+This package is not published yet. Install the CLI directly from GitHub with `pipx`:
 
 ```bash
-python -m pip install /path/to/roadmaps/public
+pipx install "roadmaps[all] @ git+https://github.com/octanima-labs/roadmaps.git"
+```
+
+Use `--force` to upgrade an existing GitHub install:
+
+```bash
+pipx install --force "roadmaps[all] @ git+https://github.com/octanima-labs/roadmaps.git"
+```
+
+The `all` extra includes both optional YAML and interactive editor dependencies.
+
+Or install it from a local clone:
+
+```bash
+python -m pip install /path/to/roadmaps
 ```
 
 YAML support is optional and uses PyYAML:
 
 ```bash
-python -m pip install "/path/to/roadmaps/public[yaml]"
+python -m pip install "/path/to/roadmaps[yaml]"
 ```
 
 The interactive editor is optional and uses Textual:
 
 ```bash
-python -m pip install "/path/to/roadmaps/public[editor]"
+python -m pip install "/path/to/roadmaps[editor]"
 ```
 
 Or install it editable while developing:
 
 ```bash
-python -m pip install -e /path/to/roadmaps/public
+python -m pip install -e /path/to/roadmaps
 ```
 
 ## Text Roadmaps
@@ -182,40 +196,40 @@ print(roadmap.to_text())
 
 ## CLI
 
-The `roadmap` command infers input format from `.roadmap`, `.txt`, `.json`, `.yaml`, `.yml`, `.md`, and `.markdown` extensions, or accepts `--format text|json|yaml|markdown`.
+The `roadmaps` command infers input format from `.roadmap`, `.txt`, `.json`, `.yaml`, `.yml`, `.md`, and `.markdown` extensions, or accepts `--format text|json|yaml|markdown`.
 
 Validate a file:
 
 ```bash
-roadmap validate roadmap.roadmap
+roadmaps validate roadmap.roadmap
 ```
 
 Show the next task, or several next tasks, in the source format:
 
 ```bash
-roadmap next roadmap.md
-roadmap next roadmap.md --count 3
+roadmaps next roadmap.md
+roadmaps next roadmap.md --count 3
 ```
 
 Render between formats:
 
 ```bash
-roadmap export roadmap.roadmap --to markdown
-roadmap export roadmap.json --to yaml
+roadmaps export roadmap.roadmap --to markdown
+roadmaps export roadmap.json --to yaml
 ```
 
 Show completion and task counts:
 
 ```bash
-roadmap stats roadmap.json
+roadmaps stats roadmap.json
 ```
 
 Filter roadmap items:
 
 ```bash
-roadmap search roadmap.roadmap --uncompleted
-roadmap search roadmap.md --completed --ongoing --optional
-roadmap search roadmap.yaml --category docs 'feat(parser)' --to markdown
+roadmaps search roadmap.roadmap --uncompleted
+roadmaps search roadmap.md --completed --ongoing --optional
+roadmaps search roadmap.yaml --category docs 'feat(parser)' --to markdown
 ```
 
 `search` returns flat `Task` and `TaskGroup` matches in traversal order. Status filters combine by union, optional items are hidden unless `--optional` or `--all` is supplied, categories match conventional prefixes such as `docs:` or `feat(parser):`, and no matches returns `no matching tasks` with exit code `0`.
@@ -223,10 +237,10 @@ roadmap search roadmap.yaml --category docs 'feat(parser)' --to markdown
 Create a new empty roadmap file:
 
 ```bash
-roadmap init roadmap.roadmap
-roadmap init --format json roadmap.data
-roadmap init --format yaml roadmap.data
-roadmap init --example roadmap.md
+roadmaps init roadmap.roadmap
+roadmaps init --format json roadmap.data
+roadmaps init --format yaml roadmap.data
+roadmaps init --example roadmap.md
 ```
 
 `init` refuses to overwrite existing files. Unknown extensions default to text unless `--format` is provided. Markdown initialization writes a `## Roadmap` section. Use `--example` to create a feature-rich starter roadmap.
@@ -234,10 +248,10 @@ roadmap init --example roadmap.md
 Append a top-level task or add a nested child by 1-based dotted path:
 
 ```bash
-roadmap task add roadmap.roadmap -d "docs: publish examples" --urgent --milestone 1
-roadmap task add roadmap.json -d "core: partial work" --status ongoing --completion 50.0
-roadmap task add roadmap.yaml -d "core: partial work" --status ongoing --completion 50.0
-roadmap task add roadmap.roadmap --parent 1.2 -d "nested child"
+roadmaps task add roadmap.roadmap -d "docs: publish examples" --urgent --milestone 1
+roadmaps task add roadmap.json -d "core: partial work" --status ongoing --completion 50.0
+roadmaps task add roadmap.yaml -d "core: partial work" --status ongoing --completion 50.0
+roadmaps task add roadmap.roadmap --parent 1.2 -d "nested child"
 ```
 
 `task add` supports `--order`, `--priority`, `--urgent`, `--optional`, `--milestone`, `--status not-started|ongoing|completed`, and `--completion`. With `--parent`, the parent path counts all siblings at each level, leaf parents are converted to groups, child order is assigned automatically, and omitted milestones inherit from the parent. Ongoing and completed tasks created through `task add` receive JSON-persisted date fields automatically. Markdown saves preserve an existing `Roadmap` section heading level.
@@ -245,17 +259,17 @@ roadmap task add roadmap.roadmap --parent 1.2 -d "nested child"
 Edit, delete, move, group, and ungroup existing items by 1-based dotted path:
 
 ```bash
-roadmap task set roadmap.roadmap 1.2 -d "docs: updated" --status ongoing --completion 50
-roadmap task delete roadmap.roadmap 2
-roadmap task move roadmap.roadmap 3 --before 1
-roadmap task move roadmap.roadmap 2 --parent 1
-roadmap task group roadmap.roadmap 1 2 -d "New group"
-roadmap task ungroup roadmap.roadmap 1
+roadmaps task set roadmap.roadmap 1.2 -d "docs: updated" --status ongoing --completion 50
+roadmaps task delete roadmap.roadmap 2
+roadmaps task move roadmap.roadmap 3 --before 1
+roadmaps task move roadmap.roadmap 2 --parent 1
+roadmaps task group roadmap.roadmap 1 2 -d "New group"
+roadmaps task ungroup roadmap.roadmap 1
 ```
 
 `task set` supports `--description`, `--priority`, `--urgent`, `--optional`, `--not-optional`, `--milestone`, `--status not-started|ongoing|completed`, and `--completion`. `task delete` removes a `TaskGroup` subtree. `task move` accepts exactly one of `--before PATH`, `--after PATH`, `--parent PATH`, or `--top-level`; leaf parents are converted to groups. `task group` requires sibling paths and `task ungroup` promotes children to the group parent. Write commands parse and re-render files canonically while preserving the source format.
 
-`roadmap editor [PATH] [--format text|json|yaml|markdown]` launches an MVP Textual editor when `roadmaps[editor]` is installed. It shows a styled path/format top bar with an orange `[UNSAVED]` tag only when dirty, plus Completion, Priority, Milestone, Order, and tree-prefixed Description columns with progress bars, priority coloring across metadata and description columns, cyan incomplete optional tasks, dimmed completed rows, roman milestones, selected-row reverse styling, and display-only order breadcrumbs. Keybindings include navigation, row selection/grouping/collapse, metadata prompts, completion/priority shortcuts, description editing, sibling and subtask insertion, movement, nesting, completed-row visibility, save, and dirty-exit confirmation. Without Textual it returns `error: Textual is required for the editor; install roadmaps[editor]`.
+`roadmaps editor [PATH] [--format text|json|yaml|markdown]` launches an MVP Textual editor when `roadmaps[editor]` is installed. It shows a styled path/format top bar with an orange `[UNSAVED]` tag only when dirty, plus Completion, Priority, Milestone, Order, and tree-prefixed Description columns with progress bars, priority coloring across metadata and description columns, cyan incomplete optional tasks, dimmed completed rows, roman milestones, selected-row reverse styling, and display-only order breadcrumbs. Keybindings include navigation, row selection/grouping/collapse, metadata prompts, completion/priority shortcuts, description editing, description copy with `c`, sibling and subtask insertion, movement, nesting, completed-row visibility, save, and dirty-exit confirmation. Without Textual it returns `error: Textual is required for the editor; install roadmaps[editor]`.
 
 ## Development
 

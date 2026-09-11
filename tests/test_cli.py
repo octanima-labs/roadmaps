@@ -8,12 +8,12 @@ from roadmaps._documents import Document
 from roadmaps.cli import main
 
 
-def test_cli_help_uses_singular_program_name(capsys) -> None:
+def test_cli_help_uses_plural_program_name(capsys) -> None:
     with pytest.raises(SystemExit) as exc_info:
         main(["--help"])
 
     assert exc_info.value.code == 0
-    assert capsys.readouterr().out.startswith("usage: roadmap ")
+    assert capsys.readouterr().out.startswith("usage: roadmaps ")
 
 
 @pytest.mark.parametrize(
@@ -27,12 +27,12 @@ def test_old_top_level_command_names_are_removed(command: str) -> None:
     assert exc_info.value.code == 2
 
 
-def test_pyproject_exposes_singular_console_script() -> None:
+def test_pyproject_exposes_plural_console_script() -> None:
     pyproject = Path(__file__).parents[1] / "pyproject.toml"
     metadata = tomllib.loads(pyproject.read_text())
 
     assert metadata["project"]["scripts"] == {
-        "roadmap": "roadmaps.cli:main",
+        "roadmaps": "roadmaps.cli:main",
     }
 
 
