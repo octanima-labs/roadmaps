@@ -8,28 +8,42 @@ The current package is alpha software. The CLI can inspect, convert, initialize,
 
 ## Installation
 
-This package is not published yet. Install it from a local clone:
+This package is not published yet. Install the CLI directly from GitHub with `pipx`:
 
 ```bash
-python -m pip install /path/to/roadmaps/public
+pipx install "roadmaps[all] @ git+https://github.com/octanima-labs/roadmaps.git"
+```
+
+Use `--force` to upgrade an existing GitHub install:
+
+```bash
+pipx install --force "roadmaps[all] @ git+https://github.com/octanima-labs/roadmaps.git"
+```
+
+The `all` extra includes both optional YAML and interactive editor dependencies.
+
+Or install it from a local clone:
+
+```bash
+python -m pip install /path/to/roadmaps
 ```
 
 YAML support is optional and uses PyYAML:
 
 ```bash
-python -m pip install "/path/to/roadmaps/public[yaml]"
+python -m pip install "/path/to/roadmaps[yaml]"
 ```
 
 The interactive editor is optional and uses Textual:
 
 ```bash
-python -m pip install "/path/to/roadmaps/public[editor]"
+python -m pip install "/path/to/roadmaps[editor]"
 ```
 
 Or install it editable while developing:
 
 ```bash
-python -m pip install -e /path/to/roadmaps/public
+python -m pip install -e /path/to/roadmaps
 ```
 
 ## Text Roadmaps

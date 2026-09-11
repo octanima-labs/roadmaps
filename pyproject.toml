@@ -35,6 +35,11 @@ editor = [
   "rich-gradient",
   "textual",
 ]
+all = [
+  "PyYAML",
+  "rich-gradient",
+  "textual",
+]
 
 [project.scripts]
 roadmaps = "roadmaps.cli:main"
