@@ -1526,21 +1526,31 @@ def _notification_message_width() -> int:
 
 
 def _top_bar_text(document: Document, state: EditorState) -> str:
-    path_text = str(document.path) if document.path is not None else "<UNNAMED>"
+    directory_text, name_text = _top_bar_path_parts(document)
     dirty_text = "  [UNSAVED]" if state.dirty else ""
-    return f"PATH {path_text}  FORMAT {document.format}{dirty_text}"
+    return f"PATH {directory_text}{name_text}  FORMAT {document.format}{dirty_text}"
 
 
 def _top_bar_renderable(document: Document, state: EditorState, text: Any) -> Any:
-    path_text = str(document.path) if document.path is not None else "<UNNAMED>"
+    directory_text, name_text = _top_bar_path_parts(document)
     bar = text()
     bar.append("PATH ", style="bold cyan")
-    bar.append(path_text, style="white")
+    bar.append(directory_text, style="dim white")
+    bar.append(name_text, style="white")
     bar.append("  FORMAT ", style="bold cyan")
     bar.append(document.format, style="magenta")
     if state.dirty:
         bar.append("  [UNSAVED]", style="bold orange1")
     return bar
+
+
+def _top_bar_path_parts(document: Document) -> tuple[str, str]:
+    if document.path is None:
+        return f"{Path.cwd()}/", "<UNNAMED>"
+
+    path = document.path.expanduser()
+    absolute_path = path if path.is_absolute() else Path.cwd() / path
+    return f"{absolute_path.parent}/", absolute_path.name
 
 
 def _populate_table(

@@ -151,19 +151,48 @@ def test_create_editor_app_wraps_document_and_state() -> None:
 
 def test_top_bar_shows_path_format_and_dirty_marker() -> None:
     app = create_editor_app(Document(Roadmap([Task("task")]), "yaml"))
+    path_text = f"{Path.cwd()}/<UNNAMED>"
 
-    assert _top_bar_text(app.document, app.state) == "PATH <UNNAMED>  FORMAT yaml"
+    assert _top_bar_text(app.document, app.state) == f"PATH {path_text}  FORMAT yaml"
     clean_renderable = _top_bar_renderable(app.document, app.state, Text)
-    assert clean_renderable.plain == "PATH <UNNAMED>  FORMAT yaml"
+    assert clean_renderable.plain == f"PATH {path_text}  FORMAT yaml"
     assert "UNSAVED" not in clean_renderable.plain
 
     app.state.dirty = True
 
-    assert _top_bar_text(app.document, app.state) == "PATH <UNNAMED>  FORMAT yaml  [UNSAVED]"
+    assert _top_bar_text(app.document, app.state) == f"PATH {path_text}  FORMAT yaml  [UNSAVED]"
     renderable = _top_bar_renderable(app.document, app.state, Text)
-    assert renderable.plain == "PATH <UNNAMED>  FORMAT yaml  [UNSAVED]"
+    assert renderable.plain == f"PATH {path_text}  FORMAT yaml  [UNSAVED]"
     assert renderable.spans
+    dim_spans = [span for span in renderable.spans if "dim" in str(span.style)]
+    assert dim_spans
+    assert any(renderable.plain[span.start : span.end] == f"{Path.cwd()}/" for span in dim_spans)
     assert any("orange" in str(span.style) for span in renderable.spans)
+
+
+def test_top_bar_shows_absolute_named_path_with_dim_directory() -> None:
+    app = create_editor_app(
+        Document(
+            Roadmap([Task("task")]),
+            "text",
+            path=Path("roadmap.roadmap"),
+            exists=True,
+        )
+    )
+    path_text = f"{Path.cwd()}/roadmap.roadmap"
+
+    assert _top_bar_text(app.document, app.state) == f"PATH {path_text}  FORMAT text"
+    renderable = _top_bar_renderable(app.document, app.state, Text)
+    assert renderable.plain == f"PATH {path_text}  FORMAT text"
+
+    dim_spans = [span for span in renderable.spans if "dim" in str(span.style)]
+    assert dim_spans
+    assert any(renderable.plain[span.start : span.end] == f"{Path.cwd()}/" for span in dim_spans)
+    assert any(
+        renderable.plain[span.start : span.end] == "roadmap.roadmap"
+        and "dim" not in str(span.style)
+        for span in renderable.spans
+    )
 
 
 def test_tree_description_uses_visible_tree_guides() -> None:
